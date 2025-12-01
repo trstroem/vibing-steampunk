@@ -342,6 +342,147 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleDeleteObject)
+
+	// --- Class Include Operations ---
+
+	// GetClassInclude
+	s.mcpServer.AddTool(mcp.NewTool("GetClassInclude",
+		mcp.WithDescription("Retrieve source code of a class include (definitions, implementations, macros, testclasses)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("include_type",
+			mcp.Required(),
+			mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
+		),
+	), s.handleGetClassInclude)
+
+	// CreateTestInclude
+	s.mcpServer.AddTool(mcp.NewTool("CreateTestInclude",
+		mcp.WithDescription("Create the test classes include for a class (required before writing test code)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject (lock the parent class first)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleCreateTestInclude)
+
+	// UpdateClassInclude
+	s.mcpServer.AddTool(mcp.NewTool("UpdateClassInclude",
+		mcp.WithDescription("Update source code of a class include (requires lock on parent class)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("include_type",
+			mcp.Required(),
+			mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code to write"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject (lock the parent class first)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleUpdateClassInclude)
+
+	// --- Workflow Tools ---
+
+	// WriteProgram
+	s.mcpServer.AddTool(mcp.NewTool("WriteProgram",
+		mcp.WithDescription("Update an existing program with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
+		mcp.WithString("program_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP program"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleWriteProgram)
+
+	// WriteClass
+	s.mcpServer.AddTool(mcp.NewTool("WriteClass",
+		mcp.WithDescription("Update an existing class with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP class source code (definition and implementation)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleWriteClass)
+
+	// CreateAndActivateProgram
+	s.mcpServer.AddTool(mcp.NewTool("CreateAndActivateProgram",
+		mcp.WithDescription("Create a new program with source code and activate it (Create -> Lock -> Update -> Unlock -> Activate)"),
+		mcp.WithString("program_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP program"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Program description"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP for local)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for non-local packages)"),
+		),
+	), s.handleCreateAndActivateProgram)
+
+	// CreateClassWithTests
+	s.mcpServer.AddTool(mcp.NewTool("CreateClassWithTests",
+		mcp.WithDescription("Create a new class with unit tests and run them (Create -> Lock -> Update -> CreateTestInclude -> UpdateTest -> Unlock -> Activate -> RunTests)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Class description"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP for local)"),
+		),
+		mcp.WithString("class_source",
+			mcp.Required(),
+			mcp.Description("ABAP class source code (definition and implementation)"),
+		),
+		mcp.WithString("test_source",
+			mcp.Required(),
+			mcp.Description("ABAP unit test source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for non-local packages)"),
+		),
+	), s.handleCreateClassWithTests)
 }
 
 // newToolResultError creates an error result for tool execution failures.
@@ -802,4 +943,210 @@ func (s *Server) handleDeleteObject(ctx context.Context, request mcp.CallToolReq
 	}
 
 	return mcp.NewToolResultText("Object deleted successfully"), nil
+}
+
+// --- Class Include Handlers ---
+
+func (s *Server) handleGetClassInclude(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, ok := request.Params.Arguments["class_name"].(string)
+	if !ok || className == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+
+	includeType, ok := request.Params.Arguments["include_type"].(string)
+	if !ok || includeType == "" {
+		return newToolResultError("include_type is required"), nil
+	}
+
+	source, err := s.adtClient.GetClassInclude(ctx, className, adt.ClassIncludeType(includeType))
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get class include: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(source), nil
+}
+
+func (s *Server) handleCreateTestInclude(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, ok := request.Params.Arguments["class_name"].(string)
+	if !ok || className == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+
+	lockHandle, ok := request.Params.Arguments["lock_handle"].(string)
+	if !ok || lockHandle == "" {
+		return newToolResultError("lock_handle is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	err := s.adtClient.CreateTestInclude(ctx, className, lockHandle, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to create test include: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText("Test include created successfully"), nil
+}
+
+func (s *Server) handleUpdateClassInclude(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, ok := request.Params.Arguments["class_name"].(string)
+	if !ok || className == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+
+	includeType, ok := request.Params.Arguments["include_type"].(string)
+	if !ok || includeType == "" {
+		return newToolResultError("include_type is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	lockHandle, ok := request.Params.Arguments["lock_handle"].(string)
+	if !ok || lockHandle == "" {
+		return newToolResultError("lock_handle is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	err := s.adtClient.UpdateClassInclude(ctx, className, adt.ClassIncludeType(includeType), source, lockHandle, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to update class include: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText("Class include updated successfully"), nil
+}
+
+// --- Workflow Handlers ---
+
+func (s *Server) handleWriteProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	programName, ok := request.Params.Arguments["program_name"].(string)
+	if !ok || programName == "" {
+		return newToolResultError("program_name is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	result, err := s.adtClient.WriteProgram(ctx, programName, source, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("WriteProgram failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleWriteClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, ok := request.Params.Arguments["class_name"].(string)
+	if !ok || className == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	result, err := s.adtClient.WriteClass(ctx, className, source, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("WriteClass failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleCreateAndActivateProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	programName, ok := request.Params.Arguments["program_name"].(string)
+	if !ok || programName == "" {
+		return newToolResultError("program_name is required"), nil
+	}
+
+	description, ok := request.Params.Arguments["description"].(string)
+	if !ok || description == "" {
+		return newToolResultError("description is required"), nil
+	}
+
+	packageName, ok := request.Params.Arguments["package_name"].(string)
+	if !ok || packageName == "" {
+		return newToolResultError("package_name is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	result, err := s.adtClient.CreateAndActivateProgram(ctx, programName, description, packageName, source, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("CreateAndActivateProgram failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleCreateClassWithTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, ok := request.Params.Arguments["class_name"].(string)
+	if !ok || className == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+
+	description, ok := request.Params.Arguments["description"].(string)
+	if !ok || description == "" {
+		return newToolResultError("description is required"), nil
+	}
+
+	packageName, ok := request.Params.Arguments["package_name"].(string)
+	if !ok || packageName == "" {
+		return newToolResultError("package_name is required"), nil
+	}
+
+	classSource, ok := request.Params.Arguments["class_source"].(string)
+	if !ok || classSource == "" {
+		return newToolResultError("class_source is required"), nil
+	}
+
+	testSource, ok := request.Params.Arguments["test_source"].(string)
+	if !ok || testSource == "" {
+		return newToolResultError("test_source is required"), nil
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
+	result, err := s.adtClient.CreateClassWithTests(ctx, className, description, packageName, classSource, testSource, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("CreateClassWithTests failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
 }

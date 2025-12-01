@@ -10,8 +10,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Total Tools Implemented | 17 |
-| Phase | 2 (Read + Dev Tools) |
+| Total Tools Implemented | 25 |
+| Phase | 3 (CRUD + Class Includes) |
 | Test Coverage | Unit + Integration |
 | Build Status | Passing |
 
@@ -100,14 +100,17 @@
 
 | Capability | ADT Native | abap-adt-api (TS) | mcp-abap-adt (TS) | **mcp-abap-adt-go** | Notes |
 |------------|------------|-------------------|-------------------|---------------------|-------|
-| Lock Object | Y | Y | N | **N** | Next to implement |
-| Unlock Object | Y | Y | N | **N** | Next to implement |
-| Update Source Code | Y | Y | N | **N** | Next to implement |
-| Create Object | Y | Y | N | **N** | Next to implement |
-| Delete Object | Y | Y | N | **N** | Next to implement |
+| Lock Object | Y | Y | N | **Y** | `LockObject` tool |
+| Unlock Object | Y | Y | N | **Y** | `UnlockObject` tool |
+| Update Source Code | Y | Y | N | **Y** | `UpdateSource` tool |
+| Create Object | Y | Y | N | **Y** | `CreateObject` tool |
+| Delete Object | Y | Y | N | **Y** | `DeleteObject` tool |
+| Get Class Include | Y | Y | N | **Y** | `GetClassInclude` tool |
+| Create Test Include | Y | Y | N | **Y** | `CreateTestInclude` tool |
+| Update Class Include | Y | Y | N | **Y** | `UpdateClassInclude` tool |
 | Get Inactive Objects | Y | Y | N | N | |
 
-**Coverage: 0/6 (0%)**
+**Coverage: 8/9 (89%)**
 
 ---
 
@@ -157,17 +160,17 @@
 | Data Query | 3 | 4 | 75% |
 | Dev Tools | 3 | 7 | 43% |
 | Navigation | 3 | 5 | 60% |
-| **CRUD (Write)** | **0** | **6** | **0%** |
+| **CRUD (Write)** | **8** | **9** | **89%** |
 | Transports | 0 | 4 | 0% (parked) |
 | ATC | 0 | 3 | 0% |
 | Auth/Session | 3 | 4 | 75% |
-| **TOTAL** | **21** | **47** | **45%** |
+| **TOTAL** | **29** | **50** | **58%** |
 
 ---
 
 ## MCP Tools List
 
-### Currently Available (17 tools)
+### Currently Available (25 tools)
 
 | Tool | Description | Status |
 |------|-------------|--------|
@@ -188,17 +191,23 @@
 | `SyntaxCheck` | Check ABAP syntax | Tested |
 | `Activate` | Activate ABAP object | Tested |
 | `RunUnitTests` | Run ABAP Unit tests | Tested |
+| `LockObject` | Acquire edit lock | Tested |
+| `UnlockObject` | Release edit lock | Tested |
+| `UpdateSource` | Write source code | Tested |
+| `CreateObject` | Create new objects (program, class, interface, etc.) | Tested |
+| `DeleteObject` | Delete ABAP object | Tested |
+| `GetClassInclude` | Get class include source (definitions, implementations, testclasses) | Tested |
+| `CreateTestInclude` | Create test classes include for a class | Tested |
+| `UpdateClassInclude` | Update class include source | Tested |
 
-### Next Phase - CRUD Operations
+### Next Phase - Code Intelligence
 
 | Tool | Description | Priority |
 |------|-------------|----------|
-| `LockObject` | Acquire edit lock | Critical |
-| `UnlockObject` | Release edit lock | Critical |
-| `UpdateSource` | Write source code | Critical |
-| `CreateProgram` | Create new program | High |
-| `CreateClass` | Create new class | High |
-| `DeleteObject` | Delete ABAP object | Medium |
+| `FindDefinition` | Navigate to definition | High |
+| `FindReferences` | Find all references | High |
+| `CodeCompletion` | Code completion suggestions | Medium |
+| `PrettyPrinter` | Format ABAP code | Medium |
 
 ---
 
@@ -209,15 +218,16 @@ mcp-abap-adt-go/
 ├── cmd/mcp-abap-adt-go/
 │   └── main.go                 # Entry point
 ├── internal/mcp/
-│   └── server.go               # MCP server + handlers
+│   └── server.go               # MCP server + handlers (25 tools)
 └── pkg/adt/
     ├── client.go               # ADT client (read ops)
+    ├── crud.go                 # CRUD ops (lock, unlock, create, update, delete, class includes)
     ├── devtools.go             # Dev tools (syntax, activate, unit tests)
-    ├── transport.go            # HTTP transport + CSRF
+    ├── http.go                 # HTTP transport + CSRF
     ├── config.go               # Configuration
     ├── xml.go                  # XML types
     ├── client_test.go          # Unit tests
-    ├── transport_test.go       # Transport tests
+    ├── http_test.go            # Transport tests
     └── integration_test.go     # Integration tests
 ```
 
@@ -231,28 +241,35 @@ ok  	github.com/vibingsteamer/mcp-abap-adt-go/internal/mcp	0.010s
 ok  	github.com/vibingsteamer/mcp-abap-adt-go/pkg/adt	    0.013s
 
 $ go test -tags=integration ./pkg/adt/
-PASS (10 integration tests against real SAP system)
+PASS (14 integration tests against real SAP system)
+
+Integration tests include:
+- SearchObject, GetProgram, GetClass, GetTable, GetTableContents
+- RunQuery, GetPackage, SyntaxCheck, RunUnitTests
+- CRUD_FullWorkflow (Create -> Lock -> Update -> Unlock -> Activate -> Delete)
+- LockUnlock cycle
+- ClassWithUnitTests (Create class -> Lock -> Update -> Create test include -> Write tests -> Unlock -> Activate -> Run tests)
 ```
 
 ---
 
 ## Next Steps
 
-1. **Phase 3: CRUD Operations**
-   - Lock/Unlock objects
-   - Update source code
-   - Create new objects
-   - Delete objects
-
-2. **Phase 4: Code Intelligence**
+1. **Phase 4: Code Intelligence**
    - Find definition
    - Find references
    - Code completion
+   - Pretty printer
 
-3. **Phase 5: ATC Integration**
+2. **Phase 5: ATC Integration**
    - Create ATC runs
    - Get worklist
    - Apply fixes
+
+3. **Phase 6: Transport Management (if needed)**
+   - Transport info
+   - Create transport
+   - Release transport
 
 ---
 
@@ -260,12 +277,13 @@ PASS (10 integration tests against real SAP system)
 
 | Aspect | mcp-abap-adt (TS) | mcp-abap-adt-go |
 |--------|-------------------|-----------------|
-| Tools | 13 | 17 |
+| Tools | 13 | 25 |
 | SQL Query | No | Yes |
 | Syntax Check | No | Yes |
 | Unit Tests | No | Yes |
 | Activation | No | Yes |
-| CRUD | No | Planned |
+| CRUD (Lock/Unlock/Update/Create/Delete) | No | Yes |
+| Class Includes (Test Classes) | No | Yes |
 | Distribution | npm + Node.js | Single binary |
 | Startup | ~500ms | ~10ms |
 

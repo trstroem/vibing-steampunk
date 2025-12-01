@@ -54,6 +54,11 @@ func (c *Client) SyntaxCheck(ctx context.Context, objectURL string, content stri
 }
 
 func parseSyntaxCheckResults(data []byte) ([]SyntaxCheckResult, error) {
+	// The response uses namespace prefixes like chkrun:uri, chkrun:type, etc.
+	// Go's xml package doesn't handle namespaced attributes well, so we strip the prefix
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "chkrun:", "")
+
 	type checkMessage struct {
 		URI       string `xml:"uri,attr"`
 		Type      string `xml:"type,attr"`
@@ -68,19 +73,16 @@ func parseSyntaxCheckResults(data []byte) ([]SyntaxCheckResult, error) {
 	type checkRunReports struct {
 		Reports []checkReport `xml:"checkReport"`
 	}
-	type response struct {
-		Reports checkRunReports `xml:"checkRunReports"`
-	}
 
-	var resp response
-	if err := xml.Unmarshal(data, &resp); err != nil {
+	var resp checkRunReports
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
 		return nil, fmt.Errorf("parsing syntax check response: %w", err)
 	}
 
 	var results []SyntaxCheckResult
 	lineOffsetRegex := regexp.MustCompile(`([^#]+)#start=(\d+),(\d+)`)
 
-	for _, report := range resp.Reports.Reports {
+	for _, report := range resp.Reports {
 		for _, msg := range report.MessageList.Messages {
 			result := SyntaxCheckResult{
 				URI:      msg.URI,
@@ -352,6 +354,16 @@ func (c *Client) RunUnitTests(ctx context.Context, objectURL string, flags *Unit
 }
 
 func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
+	// Handle empty response (no test classes found)
+	if len(data) == 0 {
+		return &UnitTestResult{Classes: []UnitTestClass{}}, nil
+	}
+
+	// Strip namespace prefixes for consistent parsing
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "aunit:", "")
+	xmlStr = strings.ReplaceAll(xmlStr, "adtcore:", "")
+
 	type stackEntry struct {
 		URI         string `xml:"uri,attr"`
 		Type        string `xml:"type,attr"`
@@ -412,7 +424,7 @@ func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
 	}
 
 	var resp response
-	if err := xml.Unmarshal(data, &resp); err != nil {
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
 		return nil, fmt.Errorf("parsing unit test results: %w", err)
 	}
 

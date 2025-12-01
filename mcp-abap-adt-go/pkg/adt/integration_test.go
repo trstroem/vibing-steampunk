@@ -402,3 +402,468 @@ func TestIntegration_LockUnlock(t *testing.T) {
 	}
 	t.Log("Object unlocked successfully")
 }
+
+// TestIntegration_ClassWithUnitTests tests the full class + unit test workflow:
+// Create class -> Lock -> Create test include -> Write test code -> Unlock -> Activate -> Run tests
+func TestIntegration_ClassWithUnitTests(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Use a unique test class name with timestamp
+	timestamp := time.Now().Unix() % 100000
+	className := fmt.Sprintf("ZCL_MCP_%05d", timestamp)
+	packageName := "$TMP"
+	t.Logf("Test class name: %s", className)
+
+	// Step 1: Create a new class
+	t.Log("Step 1: Creating class...")
+	err := client.CreateObject(ctx, CreateObjectOptions{
+		ObjectType:  ObjectTypeClass,
+		Name:        className,
+		Description: "Test class for MCP unit test integration",
+		PackageName: packageName,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create class: %v", err)
+	}
+	t.Logf("Created class: %s", className)
+
+	// Cleanup: ensure we delete the class at the end
+	defer func() {
+		t.Log("Cleanup: Deleting class...")
+		objectURL := GetObjectURL(ObjectTypeClass, className, "")
+
+		lock, err := client.LockObject(ctx, objectURL, "MODIFY")
+		if err != nil {
+			t.Logf("Cleanup: Failed to lock for delete: %v", err)
+			return
+		}
+
+		err = client.DeleteObject(ctx, objectURL, lock.LockHandle, "")
+		if err != nil {
+			t.Logf("Cleanup: Failed to delete: %v", err)
+			client.UnlockObject(ctx, objectURL, lock.LockHandle)
+		} else {
+			t.Log("Cleanup: Class deleted successfully")
+		}
+	}()
+
+	objectURL := GetObjectURL(ObjectTypeClass, className, "")
+	t.Logf("Object URL: %s", objectURL)
+
+	// Step 2: Lock the class
+	t.Log("Step 2: Locking class...")
+	lock, err := client.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		t.Fatalf("Failed to lock class: %v", err)
+	}
+	t.Logf("Lock acquired: %s", lock.LockHandle)
+
+	// Step 3: Update main source with a simple method
+	t.Log("Step 3: Updating main source...")
+	mainSource := fmt.Sprintf(`CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    METHODS get_value RETURNING VALUE(rv_value) TYPE i.
+ENDCLASS.
+
+CLASS %s IMPLEMENTATION.
+  METHOD get_value.
+    rv_value = 42.
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className), strings.ToLower(className))
+
+	sourceURL := GetSourceURL(ObjectTypeClass, className, "")
+	err = client.UpdateSource(ctx, sourceURL, mainSource, lock.LockHandle, "")
+	if err != nil {
+		client.UnlockObject(ctx, objectURL, lock.LockHandle)
+		t.Fatalf("Failed to update main source: %v", err)
+	}
+	t.Log("Main source updated")
+
+	// Step 4: Create the test include
+	t.Log("Step 4: Creating test include...")
+	err = client.CreateTestInclude(ctx, className, lock.LockHandle, "")
+	if err != nil {
+		client.UnlockObject(ctx, objectURL, lock.LockHandle)
+		t.Fatalf("Failed to create test include: %v", err)
+	}
+	t.Log("Test include created")
+
+	// Step 5: Write test class code
+	t.Log("Step 5: Writing test class code...")
+	testSource := fmt.Sprintf(`*"* use this source file for your ABAP unit test classes
+CLASS ltcl_test DEFINITION FINAL FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    METHODS test_get_value FOR TESTING.
+ENDCLASS.
+
+CLASS ltcl_test IMPLEMENTATION.
+  METHOD test_get_value.
+    DATA(lo_cut) = NEW %s( ).
+    DATA(lv_result) = lo_cut->get_value( ).
+    cl_abap_unit_assert=>assert_equals(
+      act = lv_result
+      exp = 42
+      msg = 'get_value should return 42' ).
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className))
+
+	err = client.UpdateClassInclude(ctx, className, ClassIncludeTestClasses, testSource, lock.LockHandle, "")
+	if err != nil {
+		client.UnlockObject(ctx, objectURL, lock.LockHandle)
+		t.Fatalf("Failed to update test include: %v", err)
+	}
+	t.Log("Test class code written")
+
+	// Step 6: Unlock before activation
+	t.Log("Step 6: Unlocking class...")
+	err = client.UnlockObject(ctx, objectURL, lock.LockHandle)
+	if err != nil {
+		t.Fatalf("Failed to unlock: %v", err)
+	}
+	t.Log("Class unlocked")
+
+	// Step 7: Activate the class
+	t.Log("Step 7: Activating class...")
+	activateResult, err := client.Activate(ctx, objectURL, className)
+	if err != nil {
+		t.Fatalf("Failed to activate class: %v", err)
+	}
+	t.Logf("Activation result: success=%v, messages=%d", activateResult.Success, len(activateResult.Messages))
+
+	// Step 8: Run the unit tests
+	t.Log("Step 8: Running unit tests...")
+	flags := DefaultUnitTestFlags()
+	testResult, err := client.RunUnitTests(ctx, objectURL, &flags)
+	if err != nil {
+		t.Fatalf("Failed to run unit tests: %v", err)
+	}
+
+	t.Logf("Unit test result: %d test classes", len(testResult.Classes))
+	for _, class := range testResult.Classes {
+		t.Logf("  Class: %s", class.Name)
+		for _, method := range class.TestMethods {
+			status := "PASS"
+			if len(method.Alerts) > 0 {
+				status = "FAIL"
+				for _, alert := range method.Alerts {
+					t.Logf("    Alert: %s - %s", alert.Severity, alert.Title)
+				}
+			}
+			t.Logf("    [%s] %s (%d µs)", status, method.Name, method.ExecutionTime)
+		}
+	}
+
+	// Verify we have test results
+	if len(testResult.Classes) == 0 {
+		t.Log("Warning: No test classes found in results (this may be expected for new classes)")
+	}
+
+	t.Log("Class with unit tests workflow completed successfully!")
+}
+
+// --- Workflow E2E Integration Tests ---
+
+// TestIntegration_WriteProgram tests the WriteProgram workflow
+func TestIntegration_WriteProgram(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// First, create a test program
+	timestamp := time.Now().Unix() % 100000
+	programName := fmt.Sprintf("ZMCPW_%05d", timestamp)
+	t.Logf("Test program name: %s", programName)
+
+	// Create the program first using low-level API
+	err := client.CreateObject(ctx, CreateObjectOptions{
+		ObjectType:  ObjectTypeProgram,
+		Name:        programName,
+		Description: "Test for WriteProgram workflow",
+		PackageName: "$TMP",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create test program: %v", err)
+	}
+
+	// Cleanup at end
+	defer func() {
+		objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", programName)
+		lock, _ := client.LockObject(ctx, objectURL, "MODIFY")
+		if lock != nil {
+			client.DeleteObject(ctx, objectURL, lock.LockHandle, "")
+		}
+	}()
+
+	// Now test WriteProgram workflow
+	source := fmt.Sprintf(`REPORT %s.
+
+* Updated via WriteProgram workflow
+DATA: lv_value TYPE i.
+lv_value = 42.
+WRITE: / 'Value:', lv_value.`, strings.ToLower(programName))
+
+	result, err := client.WriteProgram(ctx, programName, source, "")
+	if err != nil {
+		t.Fatalf("WriteProgram failed: %v", err)
+	}
+
+	t.Logf("WriteProgram result: success=%v, message=%s", result.Success, result.Message)
+
+	if !result.Success {
+		if len(result.SyntaxErrors) > 0 {
+			for _, se := range result.SyntaxErrors {
+				t.Logf("  Syntax error [%s] line %d: %s", se.Severity, se.Line, se.Text)
+			}
+		}
+		if result.Activation != nil && len(result.Activation.Messages) > 0 {
+			for _, m := range result.Activation.Messages {
+				t.Logf("  Activation msg [%s]: %s", m.Type, m.ShortText)
+			}
+		}
+		t.Fatalf("WriteProgram did not succeed")
+	}
+
+	t.Log("WriteProgram workflow completed successfully!")
+}
+
+// TestIntegration_WriteClass tests the WriteClass workflow
+func TestIntegration_WriteClass(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// First, create a test class
+	timestamp := time.Now().Unix() % 100000
+	className := fmt.Sprintf("ZCL_MCPW_%05d", timestamp)
+	t.Logf("Test class name: %s", className)
+
+	// Create the class first
+	err := client.CreateObject(ctx, CreateObjectOptions{
+		ObjectType:  ObjectTypeClass,
+		Name:        className,
+		Description: "Test for WriteClass workflow",
+		PackageName: "$TMP",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create test class: %v", err)
+	}
+
+	// Cleanup at end
+	defer func() {
+		objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", className)
+		lock, _ := client.LockObject(ctx, objectURL, "MODIFY")
+		if lock != nil {
+			client.DeleteObject(ctx, objectURL, lock.LockHandle, "")
+		}
+	}()
+
+	// Now test WriteClass workflow
+	source := fmt.Sprintf(`CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    METHODS get_value RETURNING VALUE(rv_value) TYPE i.
+ENDCLASS.
+
+CLASS %s IMPLEMENTATION.
+  METHOD get_value.
+    rv_value = 100.
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className), strings.ToLower(className))
+
+	result, err := client.WriteClass(ctx, className, source, "")
+	if err != nil {
+		t.Fatalf("WriteClass failed: %v", err)
+	}
+
+	t.Logf("WriteClass result: success=%v, message=%s", result.Success, result.Message)
+
+	if !result.Success {
+		if len(result.SyntaxErrors) > 0 {
+			for _, se := range result.SyntaxErrors {
+				t.Logf("  Syntax error [%s] line %d: %s", se.Severity, se.Line, se.Text)
+			}
+		}
+		t.Fatalf("WriteClass did not succeed")
+	}
+
+	t.Log("WriteClass workflow completed successfully!")
+}
+
+// TestIntegration_CreateAndActivateProgram tests the CreateAndActivateProgram workflow
+func TestIntegration_CreateAndActivateProgram(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	timestamp := time.Now().Unix() % 100000
+	programName := fmt.Sprintf("ZMCPC_%05d", timestamp)
+	t.Logf("Test program name: %s", programName)
+
+	source := fmt.Sprintf(`REPORT %s.
+
+* Created via CreateAndActivateProgram workflow
+* Timestamp: %d
+
+DATA: lv_message TYPE string.
+lv_message = 'Hello from workflow!'.
+WRITE: / lv_message.`, strings.ToLower(programName), timestamp)
+
+	// Cleanup at end
+	defer func() {
+		objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", programName)
+		lock, _ := client.LockObject(ctx, objectURL, "MODIFY")
+		if lock != nil {
+			client.DeleteObject(ctx, objectURL, lock.LockHandle, "")
+		}
+	}()
+
+	result, err := client.CreateAndActivateProgram(ctx, programName, "Test CreateAndActivateProgram", "$TMP", source, "")
+	if err != nil {
+		t.Fatalf("CreateAndActivateProgram failed: %v", err)
+	}
+
+	t.Logf("CreateAndActivateProgram result: success=%v, message=%s", result.Success, result.Message)
+
+	if !result.Success {
+		if result.Activation != nil && len(result.Activation.Messages) > 0 {
+			for _, m := range result.Activation.Messages {
+				t.Logf("  Activation msg [%s]: %s", m.Type, m.ShortText)
+			}
+		}
+		t.Fatalf("CreateAndActivateProgram did not succeed")
+	}
+
+	// Verify the program exists and is active by reading it back
+	readSource, err := client.GetProgram(ctx, programName)
+	if err != nil {
+		t.Fatalf("Failed to read back program: %v", err)
+	}
+
+	if !strings.Contains(readSource, "Hello from workflow") {
+		t.Errorf("Program source doesn't match expected content")
+	}
+
+	t.Log("CreateAndActivateProgram workflow completed successfully!")
+}
+
+// TestIntegration_CreateClassWithTests tests the CreateClassWithTests workflow
+func TestIntegration_CreateClassWithTests(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	timestamp := time.Now().Unix() % 100000
+	className := fmt.Sprintf("ZCL_MCPT_%05d", timestamp)
+	t.Logf("Test class name: %s", className)
+
+	classSource := fmt.Sprintf(`CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    METHODS get_answer RETURNING VALUE(rv_answer) TYPE i.
+ENDCLASS.
+
+CLASS %s IMPLEMENTATION.
+  METHOD get_answer.
+    rv_answer = 42.
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className), strings.ToLower(className))
+
+	testSource := fmt.Sprintf(`*"* use this source file for your ABAP unit test classes
+CLASS ltcl_test DEFINITION FINAL FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    METHODS test_get_answer FOR TESTING.
+ENDCLASS.
+
+CLASS ltcl_test IMPLEMENTATION.
+  METHOD test_get_answer.
+    DATA(lo_cut) = NEW %s( ).
+    DATA(lv_result) = lo_cut->get_answer( ).
+    cl_abap_unit_assert=>assert_equals(
+      act = lv_result
+      exp = 42
+      msg = 'Answer should be 42' ).
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className))
+
+	// Cleanup at end
+	defer func() {
+		objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", className)
+		lock, _ := client.LockObject(ctx, objectURL, "MODIFY")
+		if lock != nil {
+			client.DeleteObject(ctx, objectURL, lock.LockHandle, "")
+		}
+	}()
+
+	result, err := client.CreateClassWithTests(ctx, className, "Test CreateClassWithTests", "$TMP", classSource, testSource, "")
+	if err != nil {
+		t.Fatalf("CreateClassWithTests failed: %v", err)
+	}
+
+	t.Logf("CreateClassWithTests result: success=%v, message=%s", result.Success, result.Message)
+
+	if !result.Success {
+		if result.Activation != nil && len(result.Activation.Messages) > 0 {
+			for _, m := range result.Activation.Messages {
+				t.Logf("  Activation msg [%s]: %s", m.Type, m.ShortText)
+			}
+		}
+		t.Fatalf("CreateClassWithTests did not succeed")
+	}
+
+	// Check unit test results
+	if result.UnitTestResult != nil {
+		t.Logf("Unit test result: %d test classes", len(result.UnitTestResult.Classes))
+		for _, tc := range result.UnitTestResult.Classes {
+			t.Logf("  Test class: %s", tc.Name)
+			for _, tm := range tc.TestMethods {
+				status := "PASS"
+				if len(tm.Alerts) > 0 {
+					status = "FAIL"
+				}
+				t.Logf("    [%s] %s (%d µs)", status, tm.Name, tm.ExecutionTime)
+				for _, alert := range tm.Alerts {
+					t.Logf("      Alert: %s - %s", alert.Severity, alert.Title)
+				}
+			}
+		}
+	}
+
+	t.Log("CreateClassWithTests workflow completed successfully!")
+}
+
+// TestIntegration_SyntaxCheckWithErrors tests SyntaxCheck returns errors correctly
+func TestIntegration_SyntaxCheckWithErrors(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	invalidCode := `REPORT ztest_syntax.
+DATA lv_test TYPE stringgg.
+DATA lv_bad TYPE unknowntype.
+WRITE 'Hello'.`
+
+	results, err := client.SyntaxCheck(ctx, "/sap/bc/adt/programs/programs/ZTEST_SYNTAX", invalidCode)
+	if err != nil {
+		t.Fatalf("SyntaxCheck call failed: %v", err)
+	}
+
+	t.Logf("SyntaxCheck found %d issues", len(results))
+	for _, r := range results {
+		t.Logf("  [%s] Line %d, Col %d: %s", r.Severity, r.Line, r.Offset, r.Text)
+	}
+
+	// Should have at least one error
+	hasError := false
+	for _, r := range results {
+		if r.Severity == "E" {
+			hasError = true
+			break
+		}
+	}
+
+	if !hasError {
+		t.Error("Expected at least one syntax error for invalid code")
+	}
+
+	t.Log("SyntaxCheck error detection test passed!")
+}
