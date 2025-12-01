@@ -483,6 +483,126 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (required for non-local packages)"),
 		),
 	), s.handleCreateClassWithTests)
+
+	// --- Code Intelligence Tools ---
+
+	// FindDefinition
+	s.mcpServer.AddTool(mcp.NewTool("FindDefinition",
+		mcp.WithDescription("Navigate to the definition of a symbol at a given position in source code"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("start_column",
+			mcp.Required(),
+			mcp.Description("Start column of the symbol (1-based)"),
+		),
+		mcp.WithNumber("end_column",
+			mcp.Required(),
+			mcp.Description("End column of the symbol (1-based)"),
+		),
+		mcp.WithBoolean("implementation",
+			mcp.Description("Navigate to implementation instead of definition (default: false)"),
+		),
+		mcp.WithString("main_program",
+			mcp.Description("Main program for includes (optional)"),
+		),
+	), s.handleFindDefinition)
+
+	// FindReferences
+	s.mcpServer.AddTool(mcp.NewTool("FindReferences",
+		mcp.WithDescription("Find all references to an ABAP object or symbol"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
+		),
+		mcp.WithNumber("line",
+			mcp.Description("Line number for position-based reference search (1-based, optional)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Description("Column number for position-based reference search (1-based, optional)"),
+		),
+	), s.handleFindReferences)
+
+	// CodeCompletion
+	s.mcpServer.AddTool(mcp.NewTool("CodeCompletion",
+		mcp.WithDescription("Get code completion suggestions at a position in source code"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Required(),
+			mcp.Description("Column number (1-based)"),
+		),
+	), s.handleCodeCompletion)
+
+	// PrettyPrint
+	s.mcpServer.AddTool(mcp.NewTool("PrettyPrint",
+		mcp.WithDescription("Format ABAP source code using the pretty printer"),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code to format"),
+		),
+	), s.handlePrettyPrint)
+
+	// GetPrettyPrinterSettings
+	s.mcpServer.AddTool(mcp.NewTool("GetPrettyPrinterSettings",
+		mcp.WithDescription("Get the current pretty printer (code formatter) settings"),
+	), s.handleGetPrettyPrinterSettings)
+
+	// SetPrettyPrinterSettings
+	s.mcpServer.AddTool(mcp.NewTool("SetPrettyPrinterSettings",
+		mcp.WithDescription("Update the pretty printer (code formatter) settings"),
+		mcp.WithBoolean("indentation",
+			mcp.Required(),
+			mcp.Description("Enable automatic indentation"),
+		),
+		mcp.WithString("style",
+			mcp.Required(),
+			mcp.Description("Keyword style: toLower, toUpper, keywordUpper, keywordLower, keywordAuto, none"),
+		),
+	), s.handleSetPrettyPrinterSettings)
+
+	// GetTypeHierarchy
+	s.mcpServer.AddTool(mcp.NewTool("GetTypeHierarchy",
+		mcp.WithDescription("Get the type hierarchy (supertypes or subtypes) for a class/interface"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Required(),
+			mcp.Description("Column number (1-based)"),
+		),
+		mcp.WithBoolean("super_types",
+			mcp.Description("Get supertypes instead of subtypes (default: false = subtypes)"),
+		),
+	), s.handleGetTypeHierarchy)
 }
 
 // newToolResultError creates an error result for tool execution failures.
@@ -1148,5 +1268,196 @@ func (s *Server) handleCreateClassWithTests(ctx context.Context, request mcp.Cal
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+// --- Code Intelligence Handlers ---
+
+func (s *Server) handleFindDefinition(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	if !ok || sourceURL == "" {
+		return newToolResultError("source_url is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	lineF, ok := request.Params.Arguments["line"].(float64)
+	if !ok {
+		return newToolResultError("line is required"), nil
+	}
+	line := int(lineF)
+
+	startColF, ok := request.Params.Arguments["start_column"].(float64)
+	if !ok {
+		return newToolResultError("start_column is required"), nil
+	}
+	startCol := int(startColF)
+
+	endColF, ok := request.Params.Arguments["end_column"].(float64)
+	if !ok {
+		return newToolResultError("end_column is required"), nil
+	}
+	endCol := int(endColF)
+
+	implementation := false
+	if impl, ok := request.Params.Arguments["implementation"].(bool); ok {
+		implementation = impl
+	}
+
+	mainProgram := ""
+	if mp, ok := request.Params.Arguments["main_program"].(string); ok {
+		mainProgram = mp
+	}
+
+	result, err := s.adtClient.FindDefinition(ctx, sourceURL, source, line, startCol, endCol, implementation, mainProgram)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("FindDefinition failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	if !ok || objectURL == "" {
+		return newToolResultError("object_url is required"), nil
+	}
+
+	line := 0
+	column := 0
+	if lineF, ok := request.Params.Arguments["line"].(float64); ok {
+		line = int(lineF)
+	}
+	if colF, ok := request.Params.Arguments["column"].(float64); ok {
+		column = int(colF)
+	}
+
+	results, err := s.adtClient.FindReferences(ctx, objectURL, line, column)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(results, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	if !ok || sourceURL == "" {
+		return newToolResultError("source_url is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	lineF, ok := request.Params.Arguments["line"].(float64)
+	if !ok {
+		return newToolResultError("line is required"), nil
+	}
+	line := int(lineF)
+
+	colF, ok := request.Params.Arguments["column"].(float64)
+	if !ok {
+		return newToolResultError("column is required"), nil
+	}
+	column := int(colF)
+
+	proposals, err := s.adtClient.CodeCompletion(ctx, sourceURL, source, line, column)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("CodeCompletion failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(proposals, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handlePrettyPrint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	formatted, err := s.adtClient.PrettyPrint(ctx, source)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("PrettyPrint failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(formatted), nil
+}
+
+func (s *Server) handleGetPrettyPrinterSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	settings, err := s.adtClient.GetPrettyPrinterSettings(ctx)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetPrettyPrinterSettings failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(settings, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleSetPrettyPrinterSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	indentation, ok := request.Params.Arguments["indentation"].(bool)
+	if !ok {
+		return newToolResultError("indentation is required"), nil
+	}
+
+	style, ok := request.Params.Arguments["style"].(string)
+	if !ok || style == "" {
+		return newToolResultError("style is required"), nil
+	}
+
+	settings := &adt.PrettyPrinterSettings{
+		Indentation: indentation,
+		Style:       adt.PrettyPrinterStyle(style),
+	}
+
+	err := s.adtClient.SetPrettyPrinterSettings(ctx, settings)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("SetPrettyPrinterSettings failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText("Pretty printer settings updated successfully"), nil
+}
+
+func (s *Server) handleGetTypeHierarchy(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	if !ok || sourceURL == "" {
+		return newToolResultError("source_url is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	lineF, ok := request.Params.Arguments["line"].(float64)
+	if !ok {
+		return newToolResultError("line is required"), nil
+	}
+	line := int(lineF)
+
+	colF, ok := request.Params.Arguments["column"].(float64)
+	if !ok {
+		return newToolResultError("column is required"), nil
+	}
+	column := int(colF)
+
+	superTypes := false
+	if st, ok := request.Params.Arguments["super_types"].(bool); ok {
+		superTypes = st
+	}
+
+	hierarchy, err := s.adtClient.GetTypeHierarchy(ctx, sourceURL, source, line, column, superTypes)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetTypeHierarchy failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(hierarchy, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
 }
