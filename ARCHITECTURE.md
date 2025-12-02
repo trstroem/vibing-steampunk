@@ -73,9 +73,9 @@ This document describes the architecture of the Go-native MCP server for SAP ADT
 ## Directory Structure
 
 ```
-mcp-adt-go/
+vibing-steamer/
 ├── cmd/mcp-adt-go/
-│   └── main.go                  # Entry point, config loading, server start
+│   └── main.go                  # CLI entry point (cobra/viper), auth handling
 │
 ├── internal/mcp/
 │   ├── server.go                # MCP server implementation (36 tool handlers)
@@ -84,9 +84,11 @@ mcp-adt-go/
 ├── pkg/adt/
 │   ├── client.go                # ADT client facade + read operations
 │   ├── client_test.go           # Client unit tests with mocks
-│   ├── config.go                # Configuration (env vars, options)
+│   ├── config.go                # Configuration with functional options
 │   ├── config_test.go           # Config unit tests
-│   ├── http.go                  # HTTP transport (CSRF, sessions)
+│   ├── cookies.go               # Cookie file parsing (Netscape format)
+│   ├── cookies_test.go          # Cookie parsing unit tests
+│   ├── http.go                  # HTTP transport (CSRF, sessions, auth)
 │   ├── http_test.go             # Transport unit tests
 │   ├── crud.go                  # CRUD operations (lock, create, update, delete)
 │   ├── devtools.go              # Dev tools (syntax check, activate, unit tests)
@@ -96,22 +98,26 @@ mcp-adt-go/
 │   ├── xml_test.go              # XML parsing tests
 │   └── integration_test.go      # Integration tests (requires SAP system)
 │
-├── reports/                     # Project documentation
-│   ├── mcp-adt-go-status.md         # Implementation status
+├── reports/                     # Project documentation and research
+│   ├── mcp-adt-go-status.md     # Implementation status
+│   ├── cookie-auth-implementation-guide.md  # Cookie auth research
 │   └── *.md                     # Discovery and analysis documents
 │
-├── testdata/                    # Test fixtures
-├── abap-adt-api-lib/           # Reference TypeScript library
-└── build/                       # Build artifacts
+├── build/                       # Cross-platform binaries (9 targets)
+├── Makefile                     # Build automation
+└── .gitignore                   # Excludes .env, cookies.txt, .mcp.json
 ```
 
 ## Component Details
 
 ### cmd/mcp-adt-go/main.go
 
-Entry point for the MCP server:
-- Loads configuration from environment variables
-- Creates ADT client with HTTP transport
+Entry point for the MCP server with full CLI support:
+- **cobra** for command-line argument parsing
+- **viper** for environment variable binding
+- **godotenv** for .env file loading
+- Configuration priority: CLI flags > env vars > .env > defaults
+- Authentication: Basic auth or cookie-based (mutually exclusive)
 - Starts MCP server on stdio
 
 ### internal/mcp/server.go
@@ -137,8 +143,15 @@ HTTP transport layer:
 - Automatic CSRF token fetching and refresh
 - Session cookie management
 - Stateful session support (required for CRUD)
-- Basic authentication
-- TLS configuration
+- Basic authentication (username/password)
+- Cookie authentication (from file or string)
+- TLS configuration with optional skip-verify
+
+#### cookies.go
+Cookie authentication support:
+- `LoadCookiesFromFile` - Netscape-format cookie file parsing
+- `ParseCookieString` - Cookie header string parsing
+- Supports SAP session cookies (MYSAPSSO2, SAP_SESSIONID, sap-usercontext)
 
 #### crud.go
 Object modification operations:
@@ -208,16 +221,18 @@ ADT XML types and parsing utilities for request/response handling.
 
 ## Testing
 
-### Unit Tests
+### Unit Tests (84 tests)
 - `*_test.go` files test with mock HTTP client
 - No SAP system required
 - Run with: `go test ./...`
+- Coverage: ~24% (pkg/adt), ~10% (internal/mcp)
 
-### Integration Tests
+### Integration Tests (20+ tests)
 - `integration_test.go` tests against real SAP system
 - Build tag: `integration`
 - Run with: `go test -tags=integration ./pkg/adt/`
-- Requires environment variables: `SAP_URL`, `SAP_USER`, `SAP_PASSWORD`, `SAP_CLIENT`
+- Requires: `SAP_URL`, `SAP_USER`, `SAP_PASSWORD`, `SAP_CLIENT`
+- Creates temporary objects in `$TMP` package, cleans up after
 
 ## Design Decisions
 
@@ -226,3 +241,20 @@ ADT XML types and parsing utilities for request/response handling.
 3. **Stateful HTTP**: Required for CRUD operations with locks
 4. **Workflow Tools**: Reduce round-trips for common operations
 5. **Separation of Concerns**: Clean split between MCP, client, and transport layers
+6. **CLI Framework**: cobra/viper for professional CLI experience
+7. **Dual Auth**: Support both basic auth and cookie auth for SSO scenarios
+
+## Build Targets
+
+The Makefile supports cross-compilation to 9 platform targets:
+
+| OS | Architectures |
+|----|---------------|
+| Linux | amd64, arm64, 386, arm |
+| macOS | amd64, arm64 (Apple Silicon) |
+| Windows | amd64, arm64, 386 |
+
+Build commands:
+- `make build` - Current platform
+- `make build-all` - All 9 targets
+- `make build-linux` / `make build-darwin` / `make build-windows` - OS-specific

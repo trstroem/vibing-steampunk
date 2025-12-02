@@ -317,32 +317,50 @@ make build-windows
 ## Architecture
 
 ```
-mcp-adt-go/
-├── cmd/mcp-adt-go/          # Main entry point
-│   └── main.go              # MCP server startup
+vibing-steamer/
+├── cmd/mcp-adt-go/          # CLI entry point (cobra/viper)
+│   └── main.go              # Config resolution, auth, server startup
 ├── pkg/adt/                 # ADT client library
 │   ├── client.go            # Main client facade + read operations
-│   ├── config.go            # Configuration from environment
-│   ├── http.go              # HTTP transport with CSRF & session handling
-│   ├── crud.go              # CRUD operations (lock, unlock, create, update, delete)
-│   ├── devtools.go          # Development tools (syntax check, activate, unit tests)
-│   ├── codeintel.go         # Code intelligence (definition, references, completion)
-│   ├── workflows.go         # High-level workflow operations
-│   └── xml.go               # XML parsing utilities
+│   ├── config.go            # Configuration with functional options
+│   ├── cookies.go           # Cookie parsing (Netscape format)
+│   ├── http.go              # HTTP transport (CSRF, sessions, auth)
+│   ├── crud.go              # CRUD operations (lock, create, update, delete)
+│   ├── devtools.go          # Development tools (syntax check, activate, tests)
+│   ├── codeintel.go         # Code intelligence (definition, refs, completion)
+│   ├── workflows.go         # High-level composite operations
+│   └── xml.go               # XML types and parsing
 ├── internal/mcp/            # MCP server implementation
 │   └── server.go            # Tool registration and handlers (36 tools)
-├── reports/                 # Project documentation and status
-└── testdata/                # Test fixtures
+├── reports/                 # Project documentation and research
+└── build/                   # Cross-platform binaries
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 
+## Project Status
+
+| Metric | Value |
+|--------|-------|
+| **Tools** | 36 |
+| **Unit Tests** | 84 |
+| **Integration Tests** | 20+ |
+| **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
+
 ## Roadmap
 
-- [ ] Transport Management
-- [ ] ATC (Code Quality) Integration
-- [ ] CDS View Support
-- [ ] RAP/BDEF Support
+### Planned Features
+- [ ] Transport Management (create, release, add objects)
+- [ ] ATC (ABAP Test Cockpit) integration
+- [ ] CDS View support (read, annotations)
+- [ ] RAP/BDEF support (behavior definitions)
+- [ ] Message class support
+- [ ] Domain/Data element support
+
+### Future Considerations
+- [ ] WebSocket transport for real-time updates
+- [ ] Batch operations for bulk changes
+- [ ] Code generation templates
 
 ## License
 

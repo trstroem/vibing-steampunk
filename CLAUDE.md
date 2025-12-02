@@ -126,9 +126,16 @@ case "NewTool":
 
 ## Testing
 
-- Unit tests mock the HTTP client (see `client_test.go`)
-- Integration tests use build tag `integration`
-- Integration tests create objects in `$TMP` package and clean up after
+### Unit Tests (84 tests)
+- Mock HTTP client (see `client_test.go`, `http_test.go`)
+- Cookie parsing tests (`cookies_test.go`)
+- Run: `go test ./...`
+
+### Integration Tests (20+ tests)
+- Build tag: `integration`
+- Create objects in `$TMP` package, clean up after
+- Run: `go test -tags=integration -v ./pkg/adt/`
+- Test program for manual testing: `ZTEST_MCP_CRUD` in `$TMP`
 
 ## ADT API Reference
 
@@ -142,10 +149,27 @@ The SAP ADT REST API documentation can be found at:
 2. **Lock conflicts**: Objects must be unlocked before other operations
 3. **Activation failures**: Check syntax errors first with `SyntaxCheck`
 4. **Session issues**: CRUD operations require stateful sessions
+5. **Auth conflicts**: Use only one auth method (basic OR cookies, not both)
+6. **Cookie auth with .env**: Pass `--cookie-file` to override .env credentials
+
+## Security Notes
+
+- Never commit `.env`, `cookies.txt`, or `.mcp.json` (all in `.gitignore`)
+- Session summaries (`*SESSION-SUMMARY*`) are also gitignored
+- Always verify no credentials in `git log --all -p` before pushing
 
 ## Project Status
 
-See `reports/mcp-adt-go-status.md` for current implementation status.
+| Metric | Value |
+|--------|-------|
+| **Tools** | 36 |
+| **Unit Tests** | 84 |
+| **Integration Tests** | 20+ |
+| **Platforms** | 9 |
+| **Phase** | 4 (Code Intelligence) - Complete |
 
-**Current Phase**: 4 (Code Intelligence)
-**Total Tools**: 36
+### Roadmap
+- Transport Management
+- ATC Integration
+- CDS View Support
+- RAP/BDEF Support
