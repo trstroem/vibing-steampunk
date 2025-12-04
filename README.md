@@ -104,7 +104,9 @@ The `RunQuery` and `GetTableContents` tools use **ABAP SQL syntax**, not standar
 
 See [MCP_USAGE.md](MCP_USAGE.md) for complete SQL syntax guide.
 
-## Documentation for AI Agents
+## Documentation
+
+### For AI Agents
 
 **[MCP Usage Guide](MCP_USAGE.md)** - Machine-friendly reference for AI assistants using this MCP server. Includes:
 - Tool selection decision trees
@@ -115,6 +117,36 @@ See [MCP_USAGE.md](MCP_USAGE.md) for complete SQL syntax guide.
 - Integration examples (CI/CD, code review)
 
 This guide follows emerging best practices for MCP documentation aimed at AI agents rather than human developers.
+
+### DSL & Automation
+
+**[DSL & Workflow Guide](docs/DSL.md)** - Comprehensive guide for automating SAP ADT operations:
+- **YAML Workflows** - Declarative automation for CI/CD pipelines
+- **Go Library** - Fluent API for programmatic access
+- **CLI Commands** - `vsp workflow test`, `vsp workflow run`
+
+Quick examples:
+
+```bash
+# Run unit tests for a package
+vsp workflow test '$TMP'
+vsp workflow test '$ZRAY*' --parallel 4 --json
+
+# Run a YAML workflow
+vsp workflow run ci-pipeline.yaml --var PACKAGE='$TMP'
+```
+
+```go
+// Go library - fluent search
+objects, _ := dsl.Search(client).
+    Query("ZCL_*").Classes().InPackage("$TMP").Execute(ctx)
+
+// Go library - test orchestration
+summary, _ := dsl.Test(client).
+    Objects(objects...).Parallel(4).Run(ctx)
+```
+
+See [docs/DSL.md](docs/DSL.md) for complete documentation and [examples/workflows/](examples/workflows/) for sample YAML workflows.
 
 ## Focused vs Expert Modes
 
@@ -536,9 +568,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 | Metric | Value |
 |--------|-------|
 | **Tools** | 45 (19 focused, 45 expert) |
-| **Unit Tests** | 154 |
+| **Unit Tests** | 167 |
 | **Integration Tests** | 21+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
+| **DSL Package** | ✅ Complete (fluent API, YAML workflows, test orchestration) |
 
 ## Roadmap
 
@@ -555,6 +588,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 - [x] **CDS Dependency Analysis** - Extract dependency tree for CDS views ([Investigation](reports/2025-12-02-016-cds-and-zray-endpoint-investigation.md))
 - [ ] **$ZRAY Local Implementation** - Execute framework code locally ([Investigation](reports/2025-12-02-016-cds-and-zray-endpoint-investigation.md) | [Plan](reports/2025-12-02-015-cds-dependency-and-zray-local-implementation.md))
 
+### Completed
+- [x] **DSL & Workflow Engine** - Fluent Go API + YAML workflows ([Documentation](docs/DSL.md))
+  - Fluent search builder with filters
+  - Test orchestration with parallel execution
+  - YAML workflow engine with extensible actions
+  - CLI: `vsp workflow test`, `vsp workflow run`
+
 ### Planned Features
 - [ ] Transport Management (create, release, add objects)
 - [ ] ATC (ABAP Test Cockpit) integration
@@ -566,7 +606,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 
 ### Future Considerations
 - [ ] WebSocket transport for real-time updates
-- [ ] Batch operations for bulk changes
+- [x] Batch operations for bulk changes - via DSL package
 - [ ] Code generation templates
 - [ ] Time-travel debugging with execution replay
 - [ ] AI-powered test generation from traces
