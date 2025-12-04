@@ -96,8 +96,8 @@ func NewServer(cfg *Config) *Server {
 		adtClient: adtClient,
 	}
 
-	// Register all tools
-	s.registerTools()
+	// Register tools based on mode
+	s.registerTools(cfg.Mode)
 
 	return s
 }
@@ -107,37 +107,105 @@ func (s *Server) ServeStdio() error {
 	return server.ServeStdio(s.mcpServer)
 }
 
-// registerTools registers all ADT tools with the MCP server.
-func (s *Server) registerTools() {
+// registerTools registers ADT tools with the MCP server based on mode.
+// Mode "focused" registers 17 essential tools (67% reduction).
+// Mode "expert" registers all 45 tools.
+func (s *Server) registerTools(mode string) {
+	// Define focused mode tool whitelist (17 essential tools)
+	focusedTools := map[string]bool{
+		// Unified tools (2)
+		"GetSource":   true,
+		"WriteSource": true,
+
+		// Search tools (3) - foundation
+		"GrepObject":   true,
+		"GrepPackage":  true,
+		"SearchObject": true,
+
+		// Primary workflow (1)
+		"EditSource": true,
+
+		// Data/Metadata read (5)
+		"GetTable":            true,
+		"GetTableContents":    true,
+		"RunQuery":            true,
+		"GetPackage":          true, // Metadata: package contents
+		"GetFunctionGroup":    true, // Metadata: function module list
+		"GetCDSDependencies":  true, // CDS dependency tree
+
+		// Code intelligence (2)
+		"FindDefinition":  true,
+		"FindReferences":  true,
+
+		// Development tools (2)
+		"SyntaxCheck":   true,
+		"RunUnitTests":  true,
+
+		// Advanced/Edge cases (2)
+		"LockObject":   true,
+		"UnlockObject": true,
+
+		// File-based deployment (2)
+		"DeployFromFile": true,
+		"SaveToFile":     true,
+	}
+
+	// Helper to check if tool should be registered
+	shouldRegister := func(toolName string) bool {
+		if mode == "expert" {
+			return true // Expert mode: register all tools
+		}
+		return focusedTools[toolName] // Focused mode: only whitelisted tools
+	}
+
+	// Unified Tools (Focused Mode) - NEW
+	if shouldRegister("GetSource") {
+		s.registerGetSource()
+	}
+	if shouldRegister("WriteSource") {
+		s.registerWriteSource()
+	}
+
+
 	// GetProgram
-	s.mcpServer.AddTool(mcp.NewTool("GetProgram",
+	if shouldRegister("GetProgram") {
+		s.mcpServer.AddTool(mcp.NewTool("GetProgram",
 		mcp.WithDescription("Retrieve ABAP program source code"),
 		mcp.WithString("program_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP program"),
 		),
 	), s.handleGetProgram)
+	}
+
 
 	// GetClass
-	s.mcpServer.AddTool(mcp.NewTool("GetClass",
+	if shouldRegister("GetClass") {
+		s.mcpServer.AddTool(mcp.NewTool("GetClass",
 		mcp.WithDescription("Retrieve ABAP class source code"),
 		mcp.WithString("class_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP class"),
 		),
 	), s.handleGetClass)
+	}
+
 
 	// GetInterface
-	s.mcpServer.AddTool(mcp.NewTool("GetInterface",
+	if shouldRegister("GetInterface") {
+		s.mcpServer.AddTool(mcp.NewTool("GetInterface",
 		mcp.WithDescription("Retrieve ABAP interface source code"),
 		mcp.WithString("interface_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP interface"),
 		),
 	), s.handleGetInterface)
+	}
+
 
 	// GetFunction
-	s.mcpServer.AddTool(mcp.NewTool("GetFunction",
+	if shouldRegister("GetFunction") {
+		s.mcpServer.AddTool(mcp.NewTool("GetFunction",
 		mcp.WithDescription("Retrieve ABAP Function Module source code"),
 		mcp.WithString("function_name",
 			mcp.Required(),
@@ -148,36 +216,48 @@ func (s *Server) registerTools() {
 			mcp.Description("Name of the function group"),
 		),
 	), s.handleGetFunction)
+	}
+
 
 	// GetFunctionGroup
-	s.mcpServer.AddTool(mcp.NewTool("GetFunctionGroup",
+	if shouldRegister("GetFunctionGroup") {
+		s.mcpServer.AddTool(mcp.NewTool("GetFunctionGroup",
 		mcp.WithDescription("Retrieve ABAP Function Group source code"),
 		mcp.WithString("function_group",
 			mcp.Required(),
 			mcp.Description("Name of the function group"),
 		),
 	), s.handleGetFunctionGroup)
+	}
+
 
 	// GetInclude
-	s.mcpServer.AddTool(mcp.NewTool("GetInclude",
+	if shouldRegister("GetInclude") {
+		s.mcpServer.AddTool(mcp.NewTool("GetInclude",
 		mcp.WithDescription("Retrieve ABAP Include Source Code"),
 		mcp.WithString("include_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP Include"),
 		),
 	), s.handleGetInclude)
+	}
+
 
 	// GetTable
-	s.mcpServer.AddTool(mcp.NewTool("GetTable",
+	if shouldRegister("GetTable") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTable",
 		mcp.WithDescription("Retrieve ABAP table structure"),
 		mcp.WithString("table_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP table"),
 		),
 	), s.handleGetTable)
+	}
+
 
 	// GetTableContents
-	s.mcpServer.AddTool(mcp.NewTool("GetTableContents",
+	if shouldRegister("GetTableContents") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTableContents",
 		mcp.WithDescription("Retrieve contents of an ABAP table"),
 		mcp.WithString("table_name",
 			mcp.Required(),
@@ -190,9 +270,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Optional full SELECT statement to filter results (e.g., \"SELECT * FROM T000 WHERE MANDT = '001'\")"),
 		),
 	), s.handleGetTableContents)
+	}
+
 
 	// RunQuery
-	s.mcpServer.AddTool(mcp.NewTool("RunQuery",
+	if shouldRegister("RunQuery") {
+		s.mcpServer.AddTool(mcp.NewTool("RunQuery",
 		mcp.WithDescription("Execute a freestyle SQL query against the SAP database"),
 		mcp.WithString("sql_query",
 			mcp.Required(),
@@ -202,9 +285,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Maximum number of rows to retrieve (default 100)"),
 		),
 	), s.handleRunQuery)
+	}
+
 
 	// GetCDSDependencies
-	s.mcpServer.AddTool(mcp.NewTool("GetCDSDependencies",
+	if shouldRegister("GetCDSDependencies") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSDependencies",
 		mcp.WithDescription("Retrieve CDS view dependency tree showing all dependent objects (tables, views, associations)"),
 		mcp.WithString("ddls_name",
 			mcp.Required(),
@@ -220,45 +306,60 @@ func (s *Server) registerTools() {
 			mcp.Description("Filter dependencies to specific package context"),
 		),
 	), s.handleGetCDSDependencies)
+	}
+
 
 	// GetStructure
-	s.mcpServer.AddTool(mcp.NewTool("GetStructure",
+	if shouldRegister("GetStructure") {
+		s.mcpServer.AddTool(mcp.NewTool("GetStructure",
 		mcp.WithDescription("Retrieve ABAP Structure"),
 		mcp.WithString("structure_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP Structure"),
 		),
 	), s.handleGetStructure)
+	}
+
 
 	// GetPackage
-	s.mcpServer.AddTool(mcp.NewTool("GetPackage",
+	if shouldRegister("GetPackage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetPackage",
 		mcp.WithDescription("Retrieve ABAP package details"),
 		mcp.WithString("package_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP package"),
 		),
 	), s.handleGetPackage)
+	}
+
 
 	// GetTransaction
-	s.mcpServer.AddTool(mcp.NewTool("GetTransaction",
+	if shouldRegister("GetTransaction") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTransaction",
 		mcp.WithDescription("Retrieve ABAP transaction details"),
 		mcp.WithString("transaction_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP transaction"),
 		),
 	), s.handleGetTransaction)
+	}
+
 
 	// GetTypeInfo
-	s.mcpServer.AddTool(mcp.NewTool("GetTypeInfo",
+	if shouldRegister("GetTypeInfo") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTypeInfo",
 		mcp.WithDescription("Retrieve ABAP type information"),
 		mcp.WithString("type_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP type"),
 		),
 	), s.handleGetTypeInfo)
+	}
+
 
 	// SearchObject
-	s.mcpServer.AddTool(mcp.NewTool("SearchObject",
+	if shouldRegister("SearchObject") {
+		s.mcpServer.AddTool(mcp.NewTool("SearchObject",
 		mcp.WithDescription("Search for ABAP objects using quick search"),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -268,11 +369,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Maximum number of results to return (default 100)"),
 		),
 	), s.handleSearchObject)
+	}
+
 
 	// --- Development Tools ---
 
 	// SyntaxCheck
-	s.mcpServer.AddTool(mcp.NewTool("SyntaxCheck",
+	if shouldRegister("SyntaxCheck") {
+		s.mcpServer.AddTool(mcp.NewTool("SyntaxCheck",
 		mcp.WithDescription("Check ABAP source code for syntax errors"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -283,9 +387,12 @@ func (s *Server) registerTools() {
 			mcp.Description("ABAP source code to check"),
 		),
 	), s.handleSyntaxCheck)
+	}
+
 
 	// Activate
-	s.mcpServer.AddTool(mcp.NewTool("Activate",
+	if shouldRegister("Activate") {
+		s.mcpServer.AddTool(mcp.NewTool("Activate",
 		mcp.WithDescription("Activate an ABAP object"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -296,9 +403,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Technical name of the object (e.g., ZTEST)"),
 		),
 	), s.handleActivate)
+	}
+
 
 	// RunUnitTests
-	s.mcpServer.AddTool(mcp.NewTool("RunUnitTests",
+	if shouldRegister("RunUnitTests") {
+		s.mcpServer.AddTool(mcp.NewTool("RunUnitTests",
 		mcp.WithDescription("Run ABAP Unit tests for an object"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -311,11 +421,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Include long duration tests (default: false)"),
 		),
 	), s.handleRunUnitTests)
+	}
+
 
 	// --- CRUD Operations ---
 
 	// LockObject
-	s.mcpServer.AddTool(mcp.NewTool("LockObject",
+	if shouldRegister("LockObject") {
+		s.mcpServer.AddTool(mcp.NewTool("LockObject",
 		mcp.WithDescription("Acquire an edit lock on an ABAP object"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -325,9 +438,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Access mode: MODIFY (default) or READ"),
 		),
 	), s.handleLockObject)
+	}
+
 
 	// UnlockObject
-	s.mcpServer.AddTool(mcp.NewTool("UnlockObject",
+	if shouldRegister("UnlockObject") {
+		s.mcpServer.AddTool(mcp.NewTool("UnlockObject",
 		mcp.WithDescription("Release an edit lock on an ABAP object"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -338,9 +454,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Lock handle from LockObject"),
 		),
 	), s.handleUnlockObject)
+	}
+
 
 	// UpdateSource
-	s.mcpServer.AddTool(mcp.NewTool("UpdateSource",
+	if shouldRegister("UpdateSource") {
+		s.mcpServer.AddTool(mcp.NewTool("UpdateSource",
 		mcp.WithDescription("Write source code to an ABAP object (requires lock)"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -358,9 +477,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleUpdateSource)
+	}
+
 
 	// CreateObject
-	s.mcpServer.AddTool(mcp.NewTool("CreateObject",
+	if shouldRegister("CreateObject") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateObject",
 		mcp.WithDescription("Create a new ABAP object"),
 		mcp.WithString("object_type",
 			mcp.Required(),
@@ -385,9 +507,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Parent name (required for function modules - the function group name)"),
 		),
 	), s.handleCreateObject)
+	}
+
 
 	// DeleteObject
-	s.mcpServer.AddTool(mcp.NewTool("DeleteObject",
+	if shouldRegister("DeleteObject") {
+		s.mcpServer.AddTool(mcp.NewTool("DeleteObject",
 		mcp.WithDescription("Delete an ABAP object (requires lock)"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -401,11 +526,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleDeleteObject)
+	}
+
 
 	// --- Class Include Operations ---
 
 	// GetClassInclude
-	s.mcpServer.AddTool(mcp.NewTool("GetClassInclude",
+	if shouldRegister("GetClassInclude") {
+		s.mcpServer.AddTool(mcp.NewTool("GetClassInclude",
 		mcp.WithDescription("Retrieve source code of a class include (definitions, implementations, macros, testclasses)"),
 		mcp.WithString("class_name",
 			mcp.Required(),
@@ -416,9 +544,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
 		),
 	), s.handleGetClassInclude)
+	}
+
 
 	// CreateTestInclude
-	s.mcpServer.AddTool(mcp.NewTool("CreateTestInclude",
+	if shouldRegister("CreateTestInclude") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateTestInclude",
 		mcp.WithDescription("Create the test classes include for a class (required before writing test code)"),
 		mcp.WithString("class_name",
 			mcp.Required(),
@@ -432,9 +563,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleCreateTestInclude)
+	}
+
 
 	// UpdateClassInclude
-	s.mcpServer.AddTool(mcp.NewTool("UpdateClassInclude",
+	if shouldRegister("UpdateClassInclude") {
+		s.mcpServer.AddTool(mcp.NewTool("UpdateClassInclude",
 		mcp.WithDescription("Update source code of a class include (requires lock on parent class)"),
 		mcp.WithString("class_name",
 			mcp.Required(),
@@ -456,11 +590,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleUpdateClassInclude)
+	}
+
 
 	// --- Workflow Tools ---
 
 	// WriteProgram
-	s.mcpServer.AddTool(mcp.NewTool("WriteProgram",
+	if shouldRegister("WriteProgram") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteProgram",
 		mcp.WithDescription("Update an existing program with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
 		mcp.WithString("program_name",
 			mcp.Required(),
@@ -474,9 +611,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleWriteProgram)
+	}
+
 
 	// WriteClass
-	s.mcpServer.AddTool(mcp.NewTool("WriteClass",
+	if shouldRegister("WriteClass") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteClass",
 		mcp.WithDescription("Update an existing class with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
 		mcp.WithString("class_name",
 			mcp.Required(),
@@ -490,9 +630,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleWriteClass)
+	}
+
 
 	// CreateAndActivateProgram
-	s.mcpServer.AddTool(mcp.NewTool("CreateAndActivateProgram",
+	if shouldRegister("CreateAndActivateProgram") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateAndActivateProgram",
 		mcp.WithDescription("Create a new program with source code and activate it (Create -> Lock -> Update -> Unlock -> Activate)"),
 		mcp.WithString("program_name",
 			mcp.Required(),
@@ -514,9 +657,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (required for non-local packages)"),
 		),
 	), s.handleCreateAndActivateProgram)
+	}
+
 
 	// CreateClassWithTests
-	s.mcpServer.AddTool(mcp.NewTool("CreateClassWithTests",
+	if shouldRegister("CreateClassWithTests") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateClassWithTests",
 		mcp.WithDescription("Create a new class with unit tests and run them (Create -> Lock -> Update -> CreateTestInclude -> UpdateTest -> Unlock -> Activate -> RunTests)"),
 		mcp.WithString("class_name",
 			mcp.Required(),
@@ -542,11 +688,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (required for non-local packages)"),
 		),
 	), s.handleCreateClassWithTests)
+	}
+
 
 	// --- File-Based Deployment Tools ---
 
 	// DeployFromFile (Recommended)
-	s.mcpServer.AddTool(mcp.NewTool("DeployFromFile",
+	if shouldRegister("DeployFromFile") {
+		s.mcpServer.AddTool(mcp.NewTool("DeployFromFile",
 		mcp.WithDescription("✅ RECOMMENDED - Smart deploy from file: auto-detects if object exists and creates/updates accordingly. Solves token limit problem for large generated files (ML models, 3948+ lines). Example: DeployFromFile(file_path=\"/path/to/zcl_ml_iris.clas.abap\", package_name=\"$ZAML_IRIS\") deploys any size file. Workflow: Parse → Check existence → Create or Update → Lock → SyntaxCheck → Write → Unlock → Activate. Supports .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap. Use this for all file-based deployments."),
 		mcp.WithString("file_path",
 			mcp.Required(),
@@ -560,9 +709,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleDeployFromFile)
+	}
+
 
 	// SaveToFile
-	s.mcpServer.AddTool(mcp.NewTool("SaveToFile",
+	if shouldRegister("SaveToFile") {
+		s.mcpServer.AddTool(mcp.NewTool("SaveToFile",
 		mcp.WithDescription("Save ABAP object source to local file (SAP → File). Enables BIDIRECTIONAL SYNC WORKFLOW: (1) SaveToFile downloads object from SAP, (2) edit locally with vim/VS Code/AI assistants, (3) DeployFromFile uploads changes back to SAP. Example: SaveToFile(objType=\"CLAS/OC\", objectName=\"ZCL_ML_IRIS\", outputPath=\"./src/\") creates ./src/zcl_ml_iris.clas.abap. Then edit locally and use DeployFromFile to sync back. Recommended for iterative development. Auto-determines file extension."),
 		mcp.WithString("objType",
 			mcp.Required(),
@@ -576,9 +728,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Output file path or directory. If directory, filename is auto-generated with correct extension. If omitted, saves to current directory."),
 		),
 	), s.handleSaveToFile)
+	}
+
 
 	// RenameObject
-	s.mcpServer.AddTool(mcp.NewTool("RenameObject",
+	if shouldRegister("RenameObject") {
+		s.mcpServer.AddTool(mcp.NewTool("RenameObject",
 		mcp.WithDescription("Rename ABAP object by creating copy with new name and deleting old one. Useful for fixing naming conventions. Workflow: GetSource → Replace names → CreateNew → ActivateNew → DeleteOld"),
 		mcp.WithString("objType",
 			mcp.Required(),
@@ -600,11 +755,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleRenameObject)
+	}
+
 
 	// --- Surgical Edit Tools ---
 
 	// EditSource
-	s.mcpServer.AddTool(mcp.NewTool("EditSource",
+	if shouldRegister("EditSource") {
+		s.mcpServer.AddTool(mcp.NewTool("EditSource",
 		mcp.WithDescription("Surgical string replacement on ABAP source code. Matches the Edit tool pattern for local files. Workflow: GetSource → FindReplace → SyntaxCheck → Lock → Update → Unlock → Activate. Example: EditSource(object_url=\"/sap/bc/adt/programs/programs/ZTEST\", old_string=\"METHOD foo.\\n  ENDMETHOD.\", new_string=\"METHOD foo.\\n  rv_result = 42.\\n  ENDMETHOD.\", replace_all=false, syntax_check=true). Requires unique match if replace_all=false. Use this for incremental edits between syntax checks - no need to download/upload full source!"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -628,11 +786,14 @@ func (s *Server) registerTools() {
 			mcp.Description("If true, ignore case when matching old_string. Useful for renaming variables regardless of case. Default: false"),
 		),
 	), s.handleEditSource)
+	}
+
 
 	// --- Grep/Search Tools ---
 
 	// GrepObject
-	s.mcpServer.AddTool(mcp.NewTool("GrepObject",
+	if shouldRegister("GrepObject") {
+		s.mcpServer.AddTool(mcp.NewTool("GrepObject",
 		mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing."),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -649,9 +810,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Number of lines to show before/after each match (like grep -C). Default: 0"),
 		),
 	), s.handleGrepObject)
+	}
+
 
 	// GrepPackage
-	s.mcpServer.AddTool(mcp.NewTool("GrepPackage",
+	if shouldRegister("GrepPackage") {
+		s.mcpServer.AddTool(mcp.NewTool("GrepPackage",
 		mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object. Use for package-wide analysis, finding patterns across multiple programs/classes."),
 		mcp.WithString("package_name",
 			mcp.Required(),
@@ -671,11 +835,14 @@ func (s *Server) registerTools() {
 			mcp.Description("Maximum number of matching objects to return. 0 = unlimited. Default: 100"),
 		),
 	), s.handleGrepPackage)
+	}
+
 
 	// --- Code Intelligence Tools ---
 
 	// FindDefinition
-	s.mcpServer.AddTool(mcp.NewTool("FindDefinition",
+	if shouldRegister("FindDefinition") {
+		s.mcpServer.AddTool(mcp.NewTool("FindDefinition",
 		mcp.WithDescription("Navigate to the definition of a symbol at a given position in source code"),
 		mcp.WithString("source_url",
 			mcp.Required(),
@@ -704,9 +871,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Main program for includes (optional)"),
 		),
 	), s.handleFindDefinition)
+	}
+
 
 	// FindReferences
-	s.mcpServer.AddTool(mcp.NewTool("FindReferences",
+	if shouldRegister("FindReferences") {
+		s.mcpServer.AddTool(mcp.NewTool("FindReferences",
 		mcp.WithDescription("Find all references to an ABAP object or symbol"),
 		mcp.WithString("object_url",
 			mcp.Required(),
@@ -719,9 +889,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Column number for position-based reference search (1-based, optional)"),
 		),
 	), s.handleFindReferences)
+	}
+
 
 	// CodeCompletion
-	s.mcpServer.AddTool(mcp.NewTool("CodeCompletion",
+	if shouldRegister("CodeCompletion") {
+		s.mcpServer.AddTool(mcp.NewTool("CodeCompletion",
 		mcp.WithDescription("Get code completion suggestions at a position in source code"),
 		mcp.WithString("source_url",
 			mcp.Required(),
@@ -740,23 +913,32 @@ func (s *Server) registerTools() {
 			mcp.Description("Column number (1-based)"),
 		),
 	), s.handleCodeCompletion)
+	}
+
 
 	// PrettyPrint
-	s.mcpServer.AddTool(mcp.NewTool("PrettyPrint",
+	if shouldRegister("PrettyPrint") {
+		s.mcpServer.AddTool(mcp.NewTool("PrettyPrint",
 		mcp.WithDescription("Format ABAP source code using the pretty printer"),
 		mcp.WithString("source",
 			mcp.Required(),
 			mcp.Description("ABAP source code to format"),
 		),
 	), s.handlePrettyPrint)
+	}
+
 
 	// GetPrettyPrinterSettings
-	s.mcpServer.AddTool(mcp.NewTool("GetPrettyPrinterSettings",
+	if shouldRegister("GetPrettyPrinterSettings") {
+		s.mcpServer.AddTool(mcp.NewTool("GetPrettyPrinterSettings",
 		mcp.WithDescription("Get the current pretty printer (code formatter) settings"),
 	), s.handleGetPrettyPrinterSettings)
+	}
+
 
 	// SetPrettyPrinterSettings
-	s.mcpServer.AddTool(mcp.NewTool("SetPrettyPrinterSettings",
+	if shouldRegister("SetPrettyPrinterSettings") {
+		s.mcpServer.AddTool(mcp.NewTool("SetPrettyPrinterSettings",
 		mcp.WithDescription("Update the pretty printer (code formatter) settings"),
 		mcp.WithBoolean("indentation",
 			mcp.Required(),
@@ -767,9 +949,12 @@ func (s *Server) registerTools() {
 			mcp.Description("Keyword style: toLower, toUpper, keywordUpper, keywordLower, keywordAuto, none"),
 		),
 	), s.handleSetPrettyPrinterSettings)
+	}
+
 
 	// GetTypeHierarchy
-	s.mcpServer.AddTool(mcp.NewTool("GetTypeHierarchy",
+	if shouldRegister("GetTypeHierarchy") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTypeHierarchy",
 		mcp.WithDescription("Get the type hierarchy (supertypes or subtypes) for a class/interface"),
 		mcp.WithString("source_url",
 			mcp.Required(),
@@ -791,6 +976,8 @@ func (s *Server) registerTools() {
 			mcp.Description("Get supertypes instead of subtypes (default: false = subtypes)"),
 		),
 	), s.handleGetTypeHierarchy)
+	}
+
 }
 
 // newToolResultError creates an error result for tool execution failures.
@@ -1900,5 +2087,131 @@ func (s *Server) handleGetTypeHierarchy(ctx context.Context, request mcp.CallToo
 	}
 
 	output, _ := json.MarshalIndent(hierarchy, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+// registerGetSource registers the unified GetSource tool
+func (s *Server) registerGetSource() {
+	s.mcpServer.AddTool(mcp.NewTool("GetSource",
+		mcp.WithDescription("Unified tool for reading ABAP source code across different object types. Replaces GetProgram, GetClass, GetInterface, GetFunction, GetInclude, GetFunctionGroup, GetClassInclude."),
+		mcp.WithString("object_type",
+			mcp.Required(),
+			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), FUNC (function module), FUGR (function group), INCL (include)"),
+		),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Object name (e.g., program name, class name, function module name)"),
+		),
+		mcp.WithString("parent",
+			mcp.Description("Function group name (required only for FUNC type)"),
+		),
+		mcp.WithString("include",
+			mcp.Description("Class include type for CLAS: definitions, implementations, macros, testclasses (optional)"),
+		),
+	), s.handleGetSource)
+}
+
+// registerWriteSource registers the unified WriteSource tool
+func (s *Server) registerWriteSource() {
+	s.mcpServer.AddTool(mcp.NewTool("WriteSource",
+		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests."),
+		mcp.WithString("object_type",
+			mcp.Required(),
+			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface)"),
+		),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Object name"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code"),
+		),
+		mcp.WithString("mode",
+			mcp.Description("Operation mode: upsert (default, auto-detect), create (new only), update (existing only)"),
+		),
+		mcp.WithString("description",
+			mcp.Description("Object description (required for create mode)"),
+		),
+		mcp.WithString("package",
+			mcp.Description("Package name (required for create mode)"),
+		),
+		mcp.WithString("test_source",
+			mcp.Description("Test source code for CLAS (auto-creates test include and runs tests)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number"),
+		),
+	), s.handleWriteSource)
+}
+
+// handleGetSource handles the unified GetSource tool call
+func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectType, ok := request.Params.Arguments["object_type"].(string)
+	if !ok || objectType == "" {
+		return newToolResultError("object_type is required"), nil
+	}
+
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	parent, _ := request.Params.Arguments["parent"].(string)
+	include, _ := request.Params.Arguments["include"].(string)
+
+	opts := &adt.GetSourceOptions{
+		Parent:  parent,
+		Include: include,
+	}
+
+	source, err := s.adtClient.GetSource(ctx, objectType, name, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(source), nil
+}
+
+// handleWriteSource handles the unified WriteSource tool call
+func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectType, ok := request.Params.Arguments["object_type"].(string)
+	if !ok || objectType == "" {
+		return newToolResultError("object_type is required"), nil
+	}
+
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	source, ok := request.Params.Arguments["source"].(string)
+	if !ok || source == "" {
+		return newToolResultError("source is required"), nil
+	}
+
+	mode, _ := request.Params.Arguments["mode"].(string)
+	description, _ := request.Params.Arguments["description"].(string)
+	packageName, _ := request.Params.Arguments["package"].(string)
+	testSource, _ := request.Params.Arguments["test_source"].(string)
+	transport, _ := request.Params.Arguments["transport"].(string)
+
+	opts := &adt.WriteSourceOptions{
+		Description: description,
+		Package:     packageName,
+		TestSource:  testSource,
+		Transport:   transport,
+	}
+
+	if mode != "" {
+		opts.Mode = adt.WriteSourceMode(mode)
+	}
+
+	result, err := s.adtClient.WriteSource(ctx, objectType, name, source, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("WriteSource failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
 }
