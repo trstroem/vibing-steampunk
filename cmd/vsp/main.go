@@ -158,9 +158,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 }
 
 func resolveConfig(cmd *cobra.Command) {
-	// Check if cookie auth is explicitly requested via CLI flags
+	// Check if cookie auth is explicitly requested via CLI flags OR env vars
 	// If so, we should NOT load user/password from env/.env to avoid conflicts
+	// Cookie auth takes precedence over basic auth since it's more explicit
 	cookieAuthViaCLI := cmd.Flags().Changed("cookie-file") || cmd.Flags().Changed("cookie-string")
+	cookieAuthViaEnv := viper.GetString("COOKIE_FILE") != "" || viper.GetString("COOKIE_STRING") != ""
+	hasCookieAuth := cookieAuthViaCLI || cookieAuthViaEnv
 
 	// URL: flag > SAP_URL env
 	if cfg.BaseURL == "" {
@@ -170,19 +173,19 @@ func resolveConfig(cmd *cobra.Command) {
 		cfg.BaseURL = viper.GetString("SERVICE_URL")
 	}
 
-	// Username: flag > SAP_USER env (skip env if cookie auth via CLI)
-	if cfg.Username == "" && !cookieAuthViaCLI {
+	// Username: flag > SAP_USER env (skip if cookie auth is present)
+	if cfg.Username == "" && !hasCookieAuth {
 		cfg.Username = viper.GetString("USER")
 	}
-	if cfg.Username == "" && !cookieAuthViaCLI {
+	if cfg.Username == "" && !hasCookieAuth {
 		cfg.Username = viper.GetString("USERNAME")
 	}
 
-	// Password: flag > SAP_PASSWORD env (skip env if cookie auth via CLI)
-	if cfg.Password == "" && !cookieAuthViaCLI {
+	// Password: flag > SAP_PASSWORD env (skip if cookie auth is present)
+	if cfg.Password == "" && !hasCookieAuth {
 		cfg.Password = viper.GetString("PASSWORD")
 	}
-	if cfg.Password == "" && !cookieAuthViaCLI {
+	if cfg.Password == "" && !hasCookieAuth {
 		cfg.Password = viper.GetString("PASS")
 	}
 
