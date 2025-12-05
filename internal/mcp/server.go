@@ -148,7 +148,7 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		},
 		"H": { // HANA/AMDP debugger
 			"AMDPDebuggerStart", "AMDPDebuggerResume", "AMDPDebuggerStop",
-			"AMDPDebuggerStep", "AMDPGetVariables",
+			"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint",
 		},
 		"D": { // ABAP debugger (external breakpoints + session)
 			"SetExternalBreakpoint", "GetExternalBreakpoints", "DeleteExternalBreakpoint",
@@ -263,6 +263,7 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"AMDPDebuggerStop":   true, // Stop AMDP debug session
 		"AMDPDebuggerStep":   true, // Step through AMDP code
 		"AMDPGetVariables":   true, // Get AMDP variable values
+		"AMDPSetBreakpoint":  true, // Set AMDP breakpoint
 
 		// CTS/Transport Management (2 read-only in focused mode)
 		// Write operations (Create, Release, Delete) only in expert mode
@@ -1689,6 +1690,21 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		s.mcpServer.AddTool(mcp.NewTool("AMDPGetVariables",
 			mcp.WithDescription("Get variable values during AMDP debugging. Communicates via channel to the session manager goroutine. Returns scalar, table, and array types."),
 		), s.handleAMDPGetVariables)
+	}
+
+	// AMDPSetBreakpoint
+	if shouldRegister("AMDPSetBreakpoint") {
+		s.mcpServer.AddTool(mcp.NewTool("AMDPSetBreakpoint",
+			mcp.WithDescription("Set a breakpoint in AMDP (SQLScript) code. Requires an active AMDP debug session. Specify the procedure name and line number."),
+			mcp.WithString("proc_name",
+				mcp.Required(),
+				mcp.Description("AMDP procedure name (e.g., 'ZCL_TEST=>METHOD_NAME')"),
+			),
+			mcp.WithNumber("line",
+				mcp.Required(),
+				mcp.Description("Line number in the SQLScript code"),
+			),
+		), s.handleAMDPSetBreakpoint)
 	}
 
 	// CTS/Transport Management Tools
@@ -4604,6 +4620,40 @@ func (s *Server) handleAMDPGetVariables(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleAMDPSetBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Check for active session
+	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
+	}
+
+	procName, _ := request.Params.Arguments["proc_name"].(string)
+	if procName == "" {
+		return newToolResultError("proc_name is required"), nil
+	}
+
+	lineFloat, ok := request.Params.Arguments["line"].(float64)
+	if !ok {
+		return newToolResultError("line is required"), nil
+	}
+	line := int(lineFloat)
+
+	// Send set breakpoint command via channel
+	args := map[string]interface{}{
+		"proc_name": procName,
+		"line":      line,
+	}
+	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdSetBreakpoint, args)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("AMDPSetBreakpoint failed: %v", err)), nil
+	}
+
+	if resp.Error != nil {
+		return newToolResultError(fmt.Sprintf("Set breakpoint failed: %v", resp.Error)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("AMDP breakpoint set at %s line %d", procName, line)), nil
 }
 
 // Transport Management Handlers

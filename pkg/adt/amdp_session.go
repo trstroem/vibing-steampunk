@@ -525,11 +525,20 @@ func (m *AMDPSessionManager) setBreakpoint(ctx context.Context, procName string,
 	u := fmt.Sprintf("%s/sap/bc/adt/amdp/debugger/main/%s/breakpoints?sap-client=%s",
 		m.baseURL, url.PathEscape(mainID), m.client)
 
-	// Build breakpoint XML
+	// Build breakpoint XML with correct format for bpsync
+	// Structure: breakpointsSyncRequest -> breakpoints -> breakpoint
+	// syncMode="sync" synchronizes client breakpoints with server
+	// clientId is a unique identifier for the breakpoint from the client side
+	clientID := fmt.Sprintf("bp_%s_%d", procName, line)
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<breakpoints xmlns="http://www.sap.com/adt/amdp/debugger">
-  <breakpoint procName="%s" line="%d"/>
-</breakpoints>`, procName, line)
+<amdp:breakpointsSyncRequest xmlns:amdp="http://www.sap.com/adt/amdp/debugger" amdp:syncMode="FULL">
+  <amdp:breakpoints>
+    <amdp:breakpoint amdp:clientId="%s">
+      <amdp:objectName>%s</amdp:objectName>
+      <amdp:line>%d</amdp:line>
+    </amdp:breakpoint>
+  </amdp:breakpoints>
+</amdp:breakpointsSyncRequest>`, clientID, procName, line)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", u, strings.NewReader(body))
 	if err != nil {
@@ -537,7 +546,7 @@ func (m *AMDPSessionManager) setBreakpoint(ctx context.Context, procName string,
 	}
 
 	req.Header.Set("X-CSRF-Token", m.csrfToken)
-	req.Header.Set("Content-Type", "application/xml")
+	req.Header.Set("Content-Type", "application/vnd.sap.adt.amdp.dbg.bpsync.v1+xml")
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
