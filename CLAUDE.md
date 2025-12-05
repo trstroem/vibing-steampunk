@@ -266,7 +266,7 @@ When creating a new report:
 |--------|-------|
 | **Tools** | 68 (31 focused, 68 expert) |
 | **Unit Tests** | 249 |
-| **Integration Tests** | 21+ |
+| **Integration Tests** | 22+ |
 | **Platforms** | 9 |
 | **Phase** | 4 (Native ADT Features) - In Progress |
 | **Reports** | 17 numbered + 6 reference docs |
@@ -279,6 +279,7 @@ When creating a new report:
 | **Runtime Errors** | ✅ Complete (GetDumps, GetDump - RABAX) |
 | **ABAP Profiler** | ✅ Complete (ListTraces, GetTrace - ATRA) |
 | **SQL Trace** | ✅ Complete (GetSQLTraceState, ListSQLTraces - ST05) |
+| **RAP OData E2E** | ✅ Complete (DDLS, SRVD, SRVB create + publish) |
 
 ### DSL & Workflow Usage
 

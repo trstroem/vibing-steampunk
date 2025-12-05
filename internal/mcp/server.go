@@ -684,10 +684,10 @@ func (s *Server) registerTools(mode string) {
 	// CreateObject
 	if shouldRegister("CreateObject") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateObject",
-		mcp.WithDescription("Create a new ABAP object"),
+		mcp.WithDescription("Create a new ABAP object. Supports: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package), DDLS/DF (CDS view), BDEF/BDO (behavior definition), SRVD/SRV (service definition), SRVB/SVB (service binding)"),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package)"),
+			mcp.Description("Object type: PROG/P, CLAS/OC, INTF/OI, PROG/I, FUGR/F, FUGR/FF, DEVC/K, DDLS/DF, BDEF/BDO, SRVD/SRV, SRVB/SVB"),
 		),
 		mcp.WithString("name",
 			mcp.Required(),
@@ -706,6 +706,16 @@ func (s *Server) registerTools(mode string) {
 		),
 		mcp.WithString("parent_name",
 			mcp.Description("Parent name (required for function modules - the function group name)"),
+		),
+		// RAP-specific options
+		mcp.WithString("service_definition",
+			mcp.Description("For SRVB: the service definition name to bind"),
+		),
+		mcp.WithString("binding_version",
+			mcp.Description("For SRVB: OData version 'V2' or 'V4' (default: V2)"),
+		),
+		mcp.WithString("binding_category",
+			mcp.Description("For SRVB: '0' for Web API, '1' for UI (default: 0)"),
 		),
 	), s.handleCreateObject)
 	}
@@ -791,6 +801,36 @@ func (s *Server) registerTools(mode string) {
 			mcp.Description("Transport request number (optional for local packages)"),
 		),
 	), s.handleUpdateClassInclude)
+	}
+
+
+	// PublishServiceBinding
+	if shouldRegister("PublishServiceBinding") {
+		s.mcpServer.AddTool(mcp.NewTool("PublishServiceBinding",
+		mcp.WithDescription("Publish a service binding to make it available as OData service"),
+		mcp.WithString("service_name",
+			mcp.Required(),
+			mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
+		),
+		mcp.WithString("service_version",
+			mcp.Description("Service version (default: 0001)"),
+		),
+	), s.handlePublishServiceBinding)
+	}
+
+
+	// UnpublishServiceBinding
+	if shouldRegister("UnpublishServiceBinding") {
+		s.mcpServer.AddTool(mcp.NewTool("UnpublishServiceBinding",
+		mcp.WithDescription("Unpublish a service binding"),
+		mcp.WithString("service_name",
+			mcp.Required(),
+			mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
+		),
+		mcp.WithString("service_version",
+			mcp.Description("Service version (default: 0001)"),
+		),
+	), s.handleUnpublishServiceBinding)
 	}
 
 
@@ -2035,13 +2075,30 @@ func (s *Server) handleCreateObject(ctx context.Context, request mcp.CallToolReq
 		parentName = p
 	}
 
+	// RAP-specific options
+	serviceDefinition := ""
+	if sd, ok := request.Params.Arguments["service_definition"].(string); ok {
+		serviceDefinition = sd
+	}
+	bindingVersion := ""
+	if bv, ok := request.Params.Arguments["binding_version"].(string); ok {
+		bindingVersion = bv
+	}
+	bindingCategory := ""
+	if bc, ok := request.Params.Arguments["binding_category"].(string); ok {
+		bindingCategory = bc
+	}
+
 	opts := adt.CreateObjectOptions{
-		ObjectType:  adt.CreatableObjectType(objectType),
-		Name:        name,
-		Description: description,
-		PackageName: packageName,
-		Transport:   transport,
-		ParentName:  parentName,
+		ObjectType:        adt.CreatableObjectType(objectType),
+		Name:              name,
+		Description:       description,
+		PackageName:       packageName,
+		Transport:         transport,
+		ParentName:        parentName,
+		ServiceDefinition: serviceDefinition,
+		BindingVersion:    bindingVersion,
+		BindingCategory:   bindingCategory,
 	}
 
 	err := s.adtClient.CreateObject(ctx, opts)
@@ -2160,6 +2217,48 @@ func (s *Server) handleUpdateClassInclude(ctx context.Context, request mcp.CallT
 	}
 
 	return mcp.NewToolResultText("Class include updated successfully"), nil
+}
+
+// --- Service Binding Publish/Unpublish Handlers ---
+
+func (s *Server) handlePublishServiceBinding(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	serviceName, ok := request.Params.Arguments["service_name"].(string)
+	if !ok || serviceName == "" {
+		return newToolResultError("service_name is required"), nil
+	}
+
+	serviceVersion := "0001"
+	if sv, ok := request.Params.Arguments["service_version"].(string); ok && sv != "" {
+		serviceVersion = sv
+	}
+
+	result, err := s.adtClient.PublishServiceBinding(ctx, serviceName, serviceVersion)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to publish service binding: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleUnpublishServiceBinding(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	serviceName, ok := request.Params.Arguments["service_name"].(string)
+	if !ok || serviceName == "" {
+		return newToolResultError("service_name is required"), nil
+	}
+
+	serviceVersion := "0001"
+	if sv, ok := request.Params.Arguments["service_version"].(string); ok && sv != "" {
+		serviceVersion = sv
+	}
+
+	result, err := s.adtClient.UnpublishServiceBinding(ctx, serviceName, serviceVersion)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to unpublish service binding: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
 }
 
 // --- Workflow Handlers ---
@@ -2319,23 +2418,55 @@ func (s *Server) handleDeployFromFile(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Support both old (objType/objectName/outputPath) and new (object_type/object_name/output_dir) parameter names
 	objTypeStr, ok := request.Params.Arguments["objType"].(string)
 	if !ok || objTypeStr == "" {
-		return newToolResultError("objType is required (e.g., CLAS/OC, PROG/P, INTF/OI, FUGR/F, FUGR/FF)"), nil
+		objTypeStr, ok = request.Params.Arguments["object_type"].(string)
+		if !ok || objTypeStr == "" {
+			return newToolResultError("object_type is required (e.g., PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD)"), nil
+		}
 	}
 
 	objectName, ok := request.Params.Arguments["objectName"].(string)
 	if !ok || objectName == "" {
-		return newToolResultError("objectName is required"), nil
+		objectName, ok = request.Params.Arguments["object_name"].(string)
+		if !ok || objectName == "" {
+			return newToolResultError("object_name is required"), nil
+		}
 	}
 
 	outputPath := ""
 	if p, ok := request.Params.Arguments["outputPath"].(string); ok {
 		outputPath = p
+	} else if p, ok := request.Params.Arguments["output_dir"].(string); ok {
+		outputPath = p
 	}
 
-	// Parse object type
-	objType := adt.CreatableObjectType(objTypeStr)
+	// Parse object type - support both short (PROG) and full (PROG/P) format
+	var objType adt.CreatableObjectType
+	switch strings.ToUpper(objTypeStr) {
+	case "PROG", "PROG/P":
+		objType = adt.ObjectTypeProgram
+	case "CLAS", "CLAS/OC":
+		objType = adt.ObjectTypeClass
+	case "INTF", "INTF/OI":
+		objType = adt.ObjectTypeInterface
+	case "FUGR", "FUGR/F":
+		objType = adt.ObjectTypeFunctionGroup
+	case "FUNC", "FUGR/FF":
+		objType = adt.ObjectTypeFunctionMod
+	case "INCL", "PROG/I":
+		objType = adt.ObjectTypeInclude
+	// RAP types
+	case "DDLS", "DDLS/DF":
+		objType = adt.ObjectTypeDDLS
+	case "BDEF", "BDEF/BDO":
+		objType = adt.ObjectTypeBDEF
+	case "SRVD", "SRVD/SRV":
+		objType = adt.ObjectTypeSRVD
+	default:
+		objType = adt.CreatableObjectType(objTypeStr)
+	}
 
 	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, outputPath)
 	if err != nil {
@@ -2860,10 +2991,10 @@ func (s *Server) registerGetSource() {
 // registerWriteSource registers the unified WriteSource tool
 func (s *Server) registerWriteSource() {
 	s.mcpServer.AddTool(mcp.NewTool("WriteSource",
-		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests."),
+		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Supports PROG, CLAS, INTF, and RAP types (DDLS, BDEF, SRVD)."),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface)"),
+			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), DDLS (CDS view), BDEF (behavior definition), SRVD (service definition)"),
 		),
 		mcp.WithString("name",
 			mcp.Required(),
@@ -3016,10 +3147,10 @@ func (s *Server) registerGrepPackages() {
 // registerImportFromFile registers the ImportFromFile tool (alias for DeployFromFile)
 func (s *Server) registerImportFromFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ImportFromFile",
-		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type, creates or updates, activates. Supports: programs, classes, interfaces, function groups/modules. Renamed from DeployFromFile for clarity."),
+		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type, creates or updates, activates. Supports: programs, classes, interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD)."),
 		mcp.WithString("file_path",
 			mcp.Required(),
-			mcp.Description("Absolute path to ABAP source file (.prog.abap, .clas.abap, .intf.abap, .fugr.abap, .func.abap)"),
+			mcp.Description("Absolute path to ABAP source file (.prog.abap, .clas.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, .srvd.srvdsrv)"),
 		),
 		mcp.WithString("package_name",
 			mcp.Description("Target package name (required for new objects)"),
@@ -3033,10 +3164,10 @@ func (s *Server) registerImportFromFile() {
 // registerExportToFile registers the ExportToFile tool (alias for SaveToFile)
 func (s *Server) registerExportToFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ExportToFile",
-		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes, interfaces, function groups/modules. Renamed from SaveToFile for clarity."),
+		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes, interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD)."),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC"),
+			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD"),
 		),
 		mcp.WithString("object_name",
 			mcp.Required(),

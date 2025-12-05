@@ -1,10 +1,10 @@
 # vsp Tool Reference
 
-Complete documentation for all 68 MCP tools available in vsp.
+Complete documentation for all 70 MCP tools available in vsp.
 
 **Mode Legend:**
 - **Focused** - Available in focused mode (31 tools, default)
-- **Expert** - Only available in expert mode (68 tools total)
+- **Expert** - Only available in expert mode (70 tools total)
 
 ---
 
@@ -14,10 +14,12 @@ These tools replace 11 granular read/write operations with intelligent parameter
 
 | Tool | Description | Mode |
 |------|-------------|------|
-| `GetSource` | Unified read for any ABAP source. Parameters: `type` (PROG/CLAS/INTF/FUNC/FUGR/INCL/DDLS/MSAG), `name`, optional `parent` (for FUNC), optional `include` (for CLAS). | Focused |
-| `WriteSource` | Unified write with auto-upsert. Parameters: `type`, `name`, `source`, `mode`, `options`. | Focused |
+| `GetSource` | Unified read for any ABAP source. Parameters: `type` (PROG/CLAS/INTF/FUNC/FUGR/INCL/DDLS/VIEW/BDEF/SRVD/SRVB/MSAG), `name`, optional `parent` (for FUNC), optional `include` (for CLAS). | Focused |
+| `WriteSource` | Unified write with auto-upsert. Parameters: `type` (PROG/CLAS/INTF/DDLS/BDEF/SRVD), `name`, `source`, `mode`, `options`. Supports create and update for classic ABAP and RAP types. | Focused |
 
 **Benefits:** 70% token reduction, simplified tool selection, extensible for new types.
+
+**RAP Support (NEW):** WriteSource now supports creating and updating CDS views (DDLS), behavior definitions (BDEF), and service definitions (SRVD).
 
 ---
 
@@ -118,9 +120,28 @@ These tools replace 11 granular read/write operations with intelligent parameter
 |------|-------------|------|
 | `LockObject` | Acquire edit lock | Focused |
 | `UnlockObject` | Release edit lock | Focused |
-| `CreateObject` | Create new object (program, class, interface, include, function group, function module, package) | Expert |
+| `CreateObject` | Create new object (program, class, interface, include, function group, function module, package, **DDLS, BDEF, SRVD, SRVB**) | Expert |
 | `UpdateSource` | Write source code | Expert |
 | `DeleteObject` | Delete an object | Expert |
+
+**RAP Object Creation (NEW):** CreateObject now supports:
+- `DDLS/DF` - CDS DDL Source (view definitions)
+- `BDEF/BDO` - Behavior Definition
+- `SRVD/SRV` - Service Definition
+- `SRVB/SVB` - Service Binding (requires `service_definition`, optional `binding_version`, `binding_category`)
+
+---
+
+## Service Binding Operations (2 tools) - NEW
+
+| Tool | Description | Mode |
+|------|-------------|------|
+| `PublishServiceBinding` | Publish a service binding to make it available as OData service | Expert |
+| `UnpublishServiceBinding` | Unpublish a service binding | Expert |
+
+**Parameters:**
+- `service_name` (required) - Service binding name
+- `service_version` (default: "0001")
 
 ---
 
@@ -166,6 +187,9 @@ Solves token limit problem for large files:
 - `.intf.abap` - Interfaces
 - `.fugr.abap` - Function Groups
 - `.func.abap` - Function Modules
+- `.ddls.asddls` - CDS DDL Sources (ABAPGit format)
+- `.bdef.asbdef` - Behavior Definitions (ABAPGit format)
+- `.srvd.srvdsrv` - Service Definitions (ABAPGit format)
 
 ---
 
@@ -254,7 +278,7 @@ See [ExecuteABAP Implementation Report](reports/2025-12-05-004-execute-abap-impl
 | Mode | Tools | Description |
 |------|-------|-------------|
 | **Focused** | 31 | Essential tools for AI-assisted development |
-| **Expert** | 68 | All tools including low-level operations |
+| **Expert** | 70 | All tools including low-level operations and RAP creation |
 
 **Token Savings with Focused Mode:**
 - Tool definitions: 69% reduction (~6,500 → ~2,000 tokens)

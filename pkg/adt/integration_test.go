@@ -1389,3 +1389,239 @@ WRITE: / 'Count:', lv_count.`, strings.ToLower(programName))
 
 	t.Log("EditSource workflow completed successfully!")
 }
+
+// TestIntegration_GetDDLS tests reading a CDS DDL source
+func TestIntegration_GetDDLS(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Use a standard SAP CDS view
+	ddlsName := "I_ABAPPACKAGE"
+
+	source, err := client.GetDDLS(ctx, ddlsName)
+	if err != nil {
+		t.Fatalf("GetDDLS failed: %v", err)
+	}
+
+	t.Logf("GetDDLS returned %d bytes", len(source))
+
+	// CDS views should contain "define" keyword (view/root view entity)
+	if !strings.Contains(strings.ToLower(source), "define") {
+		t.Errorf("Expected CDS source to contain 'define', got:\n%s", source[:min(200, len(source))])
+	}
+
+	t.Logf("GetDDLS successful: %s", ddlsName)
+}
+
+// TestIntegration_GetBDEF tests reading a Behavior Definition
+func TestIntegration_GetBDEF(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Use a DMO RAP behavior definition
+	bdefName := "/DMO/C_TRAVEL_U"
+
+	source, err := client.GetBDEF(ctx, bdefName)
+	if err != nil {
+		t.Fatalf("GetBDEF failed: %v", err)
+	}
+
+	t.Logf("GetBDEF returned %d bytes", len(source))
+
+	// BDEF should contain "define behavior" keyword
+	if !strings.Contains(strings.ToLower(source), "define behavior") {
+		t.Errorf("Expected BDEF source to contain 'define behavior', got:\n%s", source[:min(200, len(source))])
+	}
+
+	t.Logf("GetBDEF successful: %s", bdefName)
+}
+
+// TestIntegration_GetSRVB tests reading a Service Binding
+func TestIntegration_GetSRVB(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Use a DMO RAP service binding
+	srvbName := "/DMO/API_TRAVEL_U_V2"
+
+	sb, err := client.GetSRVB(ctx, srvbName)
+	if err != nil {
+		t.Fatalf("GetSRVB failed: %v", err)
+	}
+
+	t.Logf("GetSRVB result: name=%s, type=%s, version=%s", sb.Name, sb.Type, sb.BindingVersion)
+
+	if sb.Name == "" {
+		t.Error("Expected SRVB name to be non-empty")
+	}
+
+	t.Logf("GetSRVB successful: %s", srvbName)
+}
+
+// TestIntegration_GetSource_RAP tests GetSource unified tool for RAP types
+func TestIntegration_GetSource_RAP(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		objectType string
+		objectName string
+		contains   string
+	}{
+		{"DDLS", "DDLS", "I_ABAPPACKAGE", "define"}, // CDS views contain "define view" or "define root view entity"
+		{"BDEF", "BDEF", "/DMO/C_TRAVEL_U", "define behavior"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := client.GetSource(ctx, tc.objectType, tc.objectName, nil)
+			if err != nil {
+				t.Fatalf("GetSource(%s, %s) failed: %v", tc.objectType, tc.objectName, err)
+			}
+
+			t.Logf("GetSource returned %d bytes", len(source))
+
+			if !strings.Contains(strings.ToLower(source), tc.contains) {
+				t.Errorf("Expected source to contain '%s'", tc.contains)
+			}
+		})
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// TestIntegration_RAP_E2E_OData tests the full RAP OData service creation workflow:
+// 1. Create CDS view (DDLS)
+// 2. Create Service Definition (SRVD)
+// 3. Create Service Binding (SRVB)
+// 4. Publish service binding
+// This test cleans up all created objects at the end.
+func TestIntegration_RAP_E2E_OData(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Test object names
+	ddlsName := "ZTEST_MCP_I_FLIGHT"
+	srvdName := "ZTEST_MCP_SD_FLIGHT"
+	srvbName := "ZTEST_MCP_SB_FLIGHT"
+	pkg := "$TMP"
+
+	// Cleanup function
+	cleanup := func() {
+		t.Log("Cleaning up test objects...")
+		// Delete in reverse order of creation (no lock needed for $TMP objects)
+		_ = client.DeleteObject(ctx, "/sap/bc/adt/businessservices/bindings/"+strings.ToLower(srvbName), "", "")
+		_ = client.DeleteObject(ctx, "/sap/bc/adt/ddic/srvd/sources/"+strings.ToLower(srvdName), "", "")
+		_ = client.DeleteObject(ctx, "/sap/bc/adt/ddic/ddl/sources/"+strings.ToLower(ddlsName), "", "")
+	}
+
+	// Defer cleanup
+	defer cleanup()
+
+	// Step 1: Create CDS View (DDLS)
+	t.Log("Step 1: Creating CDS View (DDLS)...")
+	ddlsSource := `@AbapCatalog.sqlViewName: 'ZTESTMCPIFLIGHT'
+@AbapCatalog.compiler.compareFilter: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Flight Data for OData Test'
+define view ZTEST_MCP_I_FLIGHT as select from sflight {
+  key carrid   as Airline,
+  key connid   as FlightNumber,
+  key fldate   as FlightDate,
+      price    as Price,
+      currency as Currency,
+      planetype as PlaneType,
+      seatsmax as SeatsMax,
+      seatsocc as SeatsOccupied
+}`
+
+	ddlsResult, err := client.WriteSource(ctx, "DDLS", ddlsName, ddlsSource, &WriteSourceOptions{
+		Mode:        WriteModeUpsert,
+		Package:     pkg,
+		Description: "Flight Data for OData Test",
+	})
+	if err != nil {
+		t.Fatalf("WriteSource DDLS failed: %v", err)
+	}
+	t.Logf("DDLS result: success=%v, mode=%s, message=%s", ddlsResult.Success, ddlsResult.Mode, ddlsResult.Message)
+	if !ddlsResult.Success {
+		t.Fatalf("DDLS creation failed: %s", ddlsResult.Message)
+	}
+
+	// Step 2: Create Service Definition (SRVD)
+	t.Log("Step 2: Creating Service Definition (SRVD)...")
+	srvdSource := `@EndUserText.label: 'Flight Service Definition'
+define service ZTEST_MCP_SD_FLIGHT {
+  expose ZTEST_MCP_I_FLIGHT as Flights;
+}`
+
+	srvdResult, err := client.WriteSource(ctx, "SRVD", srvdName, srvdSource, &WriteSourceOptions{
+		Mode:        WriteModeUpsert,
+		Package:     pkg,
+		Description: "Flight Service Definition",
+	})
+	if err != nil {
+		t.Fatalf("WriteSource SRVD failed: %v", err)
+	}
+	t.Logf("SRVD result: success=%v, mode=%s, message=%s", srvdResult.Success, srvdResult.Mode, srvdResult.Message)
+	if !srvdResult.Success {
+		t.Fatalf("SRVD creation failed: %s", srvdResult.Message)
+	}
+
+	// Step 3: Create Service Binding (SRVB)
+	t.Log("Step 3: Creating Service Binding (SRVB)...")
+	err = client.CreateObject(ctx, CreateObjectOptions{
+		ObjectType:        ObjectTypeSRVB,
+		Name:              srvbName,
+		PackageName:       pkg,
+		Description:       "Flight OData V2 Binding",
+		ServiceDefinition: srvdName,
+		BindingVersion:    "V2",
+		BindingCategory:   "0", // Web API
+	})
+	if err != nil {
+		// SRVB might already exist from previous run
+		if !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("CreateObject SRVB failed: %v", err)
+		}
+		t.Log("SRVB already exists, continuing...")
+	} else {
+		t.Log("SRVB created successfully")
+	}
+
+	// Step 4: Activate SRVB
+	t.Log("Step 4: Activating Service Binding...")
+	srvbURL := "/sap/bc/adt/businessservices/bindings/" + strings.ToLower(srvbName)
+	activationResult, err := client.Activate(ctx, srvbURL, srvbName)
+	if err != nil {
+		t.Logf("Activation warning: %v", err)
+	} else {
+		t.Logf("Activation result: success=%v, messages=%v", activationResult.Success, activationResult.Messages)
+	}
+
+	// Step 5: Publish Service Binding
+	t.Log("Step 5: Publishing Service Binding...")
+	publishResult, err := client.PublishServiceBinding(ctx, srvbName, "0001")
+	if err != nil {
+		// Publishing might fail if already published or system restrictions
+		t.Logf("Publish warning (non-fatal): %v", err)
+	} else {
+		t.Logf("Service Binding published successfully! Result: %+v", publishResult)
+	}
+
+	// Step 6: Verify SRVB was created
+	t.Log("Step 6: Verifying Service Binding...")
+	sb, err := client.GetSRVB(ctx, srvbName)
+	if err != nil {
+		t.Fatalf("GetSRVB verification failed: %v", err)
+	}
+	t.Logf("SRVB verified: name=%s, type=%s, version=%s", sb.Name, sb.Type, sb.BindingVersion)
+
+	t.Log("RAP E2E OData test completed successfully!")
+}

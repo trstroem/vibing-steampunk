@@ -155,6 +155,11 @@ const (
 	ObjectTypeFunctionMod   CreatableObjectType = "FUGR/FF"
 	ObjectTypeTable         CreatableObjectType = "TABL/DT"
 	ObjectTypePackage       CreatableObjectType = "DEVC/K"
+	// RAP object types (read-only via ADT, created via RAP generators)
+	ObjectTypeDDLS CreatableObjectType = "DDLS/DF"  // CDS DDL Source
+	ObjectTypeBDEF CreatableObjectType = "BDEF/BDO" // Behavior Definition
+	ObjectTypeSRVD CreatableObjectType = "SRVD/SRV" // Service Definition
+	ObjectTypeSRVB CreatableObjectType = "SRVB/SVB" // Service Binding
 )
 
 // CreateObjectOptions contains options for creating a new ABAP object.
@@ -167,6 +172,20 @@ type CreateObjectOptions struct {
 	Responsible string              `json:"responsible,omitempty"`
 	// For function modules - the function group name
 	ParentName string `json:"parentName,omitempty"`
+
+	// RAP-specific options
+	// For BDEF: the root CDS entity name (e.g., "ZTRAVEL" for define behavior for ZTRAVEL)
+	RootEntity string `json:"rootEntity,omitempty"`
+	// For BDEF: implementation type (managed, unmanaged, projection, interface, abstract)
+	ImplementationType string `json:"implementationType,omitempty"`
+	// For SRVB: the service definition name to bind
+	ServiceDefinition string `json:"serviceDefinition,omitempty"`
+	// For SRVB: binding type ("ODATA" for both V2 and V4)
+	BindingType string `json:"bindingType,omitempty"`
+	// For SRVB: binding version ("V2" or "V4")
+	BindingVersion string `json:"bindingVersion,omitempty"`
+	// For SRVB: category ("0" for Web API, "1" for UI)
+	BindingCategory string `json:"bindingCategory,omitempty"`
 }
 
 // objectTypeInfo contains metadata for creating object types.
@@ -211,6 +230,27 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 		creationPath: "/sap/bc/adt/packages",
 		rootName:     "pack:package",
 		namespace:    `xmlns:pack="http://www.sap.com/adt/packages"`,
+	},
+	// RAP object types
+	ObjectTypeDDLS: {
+		creationPath: "/sap/bc/adt/ddic/ddl/sources",
+		rootName:     "ddl:ddlSource",
+		namespace:    `xmlns:ddl="http://www.sap.com/adt/ddic/ddlsources"`,
+	},
+	ObjectTypeBDEF: {
+		creationPath: "/sap/bc/adt/bo/behaviordefinitions",
+		rootName:     "bdef:behaviorDefinition",
+		namespace:    `xmlns:bdef="http://www.sap.com/adt/bo/behaviordefinitions"`,
+	},
+	ObjectTypeSRVD: {
+		creationPath: "/sap/bc/adt/ddic/srvd/sources",
+		rootName:     "srvd:srvdSource",
+		namespace:    `xmlns:srvd="http://www.sap.com/adt/ddic/srvdsources"`,
+	},
+	ObjectTypeSRVB: {
+		creationPath: "/sap/bc/adt/businessservices/bindings",
+		rootName:     "srvb:serviceBinding",
+		namespace:    `xmlns:srvb="http://www.sap.com/adt/ddic/ServiceBindings"`,
 	},
 }
 
@@ -327,7 +367,71 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 			typeInfo.rootName)
 	}
 
-	// Standard object creation
+	// For SRVD (Service Definition), include the srvdSourceType attribute
+	if opts.ObjectType == ObjectTypeSRVD {
+		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<%s %s xmlns:adtcore="http://www.sap.com/adt/core"
+  adtcore:description="%s"
+  adtcore:name="%s"
+  adtcore:type="%s"
+  adtcore:responsible="%s"
+  srvd:srvdSourceType="S">
+  <adtcore:packageRef adtcore:name="%s"/>
+</%s>`,
+			typeInfo.rootName, typeInfo.namespace,
+			escapeXML(opts.Description),
+			opts.Name,
+			opts.ObjectType,
+			responsible,
+			opts.PackageName,
+			typeInfo.rootName)
+	}
+
+	// For SRVB (Service Binding), include service definition and binding info
+	if opts.ObjectType == ObjectTypeSRVB {
+		bindingType := opts.BindingType
+		if bindingType == "" {
+			bindingType = "ODATA"
+		}
+		bindingVersion := opts.BindingVersion
+		if bindingVersion == "" {
+			bindingVersion = "V2"
+		}
+		bindingCategory := opts.BindingCategory
+		if bindingCategory == "" {
+			bindingCategory = "0" // Web API
+		}
+		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<%s %s xmlns:adtcore="http://www.sap.com/adt/core"
+  adtcore:description="%s"
+  adtcore:name="%s"
+  adtcore:type="%s"
+  adtcore:responsible="%s">
+  <adtcore:packageRef adtcore:name="%s"/>
+  <srvb:services srvb:name="%s">
+    <srvb:content srvb:version="0001">
+      <srvb:serviceDefinition adtcore:name="%s"/>
+    </srvb:content>
+  </srvb:services>
+  <srvb:binding srvb:category="%s" srvb:type="%s" srvb:version="%s">
+    <srvb:implementation adtcore:name=""/>
+  </srvb:binding>
+</%s>`,
+			typeInfo.rootName, typeInfo.namespace,
+			escapeXML(opts.Description),
+			opts.Name,
+			opts.ObjectType,
+			responsible,
+			opts.PackageName,
+			opts.Name,
+			strings.ToUpper(opts.ServiceDefinition),
+			bindingCategory,
+			bindingType,
+			bindingVersion,
+			typeInfo.rootName)
+	}
+
+	// Standard object creation (DDLS, BDEF use standard body)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <%s %s xmlns:adtcore="http://www.sap.com/adt/core"
   adtcore:description="%s"
@@ -403,6 +507,17 @@ func GetObjectURL(objectType CreatableObjectType, name string, parentName string
 	case ObjectTypeFunctionMod:
 		parentName = strings.ToUpper(parentName)
 		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s/fmodules/%s", parentName, name)
+	case ObjectTypePackage:
+		return fmt.Sprintf("/sap/bc/adt/packages/%s", name)
+	// RAP object types - use URL encoding for namespaced objects
+	case ObjectTypeDDLS:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeBDEF:
+		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeSRVD:
+		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeSRVB:
+		return fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", url.PathEscape(strings.ToLower(name)))
 	default:
 		return ""
 	}
@@ -518,4 +633,79 @@ func (c *Client) UpdateClassInclude(ctx context.Context, className string, inclu
 	}
 
 	return nil
+}
+
+// --- Service Binding Publish/Unpublish Operations ---
+
+// PublishResult represents the result of a publish/unpublish operation.
+type PublishResult struct {
+	Severity  string `json:"severity"`
+	ShortText string `json:"shortText"`
+	LongText  string `json:"longText"`
+}
+
+// PublishServiceBinding publishes a service binding to make it available as OData service.
+// serviceName is the service binding name (e.g., "ZTRAVEL_SB")
+// serviceVersion is typically "0001"
+func (c *Client) PublishServiceBinding(ctx context.Context, serviceName string, serviceVersion string) (*PublishResult, error) {
+	return c.publishUnpublishServiceBinding(ctx, "publishjobs", serviceName, serviceVersion)
+}
+
+// UnpublishServiceBinding unpublishes a service binding.
+func (c *Client) UnpublishServiceBinding(ctx context.Context, serviceName string, serviceVersion string) (*PublishResult, error) {
+	return c.publishUnpublishServiceBinding(ctx, "unpublishjobs", serviceName, serviceVersion)
+}
+
+func (c *Client) publishUnpublishServiceBinding(ctx context.Context, action, serviceName, serviceVersion string) (*PublishResult, error) {
+	if serviceVersion == "" {
+		serviceVersion = "0001"
+	}
+
+	params := url.Values{}
+	params.Set("servicename", serviceName)
+	params.Set("serviceversion", serviceVersion)
+
+	body := fmt.Sprintf(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
+  <adtcore:objectReference adtcore:name="%s"/>
+</adtcore:objectReferences>`, serviceName)
+
+	path := fmt.Sprintf("/sap/bc/adt/businessservices/odatav2/%s", action)
+
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method:      http.MethodPost,
+		Query:       params,
+		Body:        []byte(body),
+		ContentType: "application/*",
+		Accept:      "application/*",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s service binding: %w", action, err)
+	}
+
+	return parsePublishResult(resp.Body)
+}
+
+func parsePublishResult(data []byte) (*PublishResult, error) {
+	type publishData struct {
+		Severity  string `xml:"SEVERITY"`
+		ShortText string `xml:"SHORT_TEXT"`
+		LongText  string `xml:"LONG_TEXT"`
+	}
+	type values struct {
+		Data publishData `xml:"DATA"`
+	}
+	type abapResponse struct {
+		Values values `xml:"values"`
+	}
+
+	var resp abapResponse
+	if err := xml.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing publish response: %w", err)
+	}
+
+	return &PublishResult{
+		Severity:  resp.Values.Data.Severity,
+		ShortText: resp.Values.Data.ShortText,
+		LongText:  resp.Values.Data.LongText,
+	}, nil
 }

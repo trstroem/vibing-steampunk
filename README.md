@@ -1,6 +1,15 @@
 
 ![Vibing ABAP Developer](./media/vibing-steampunk.png)
 
+## What's New
+
+**v2.2.0** - RAP OData E2E Support
+- Create CDS views, Service Definitions, and Service Bindings
+- Publish OData V2/V4 services directly from AI assistant
+- Full RAP development lifecycle via MCP tools
+
+---
+
 # vsp
 
 A Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT).
@@ -11,6 +20,7 @@ A Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (
 
 | Feature | Description |
 |---------|-------------|
+| **RAP OData E2E** | Create CDS views, Service Definitions, Bindings → Publish OData services |
 | **Focused Mode** | 31 curated tools optimized for AI assistants (58% token reduction) |
 | **AI-Powered RCA** | Root cause analysis with dumps, traces, profiler + code intelligence |
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
@@ -238,7 +248,8 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (68 tools
 | Surgical Edit (Edit pattern) | - | - | **Y** |
 | File-based Deploy | - | - | **Y** |
 | ExecuteABAP | - | - | **Y** |
-| RAP/BDEF | Y | Y | N |
+| RAP OData (DDLS/SRVD/SRVB) | Y | - | **Y** |
+| OData Service Publish | Y | - | **Y** |
 | Debugging | Y | Y | N |
 
 </details>
@@ -331,6 +342,7 @@ vibing-steampunk/
 - [x] Short Dumps / Runtime Errors (RABAX) - GetDumps, GetDump
 - [x] ABAP Profiler / Traces (ATRA) - ListTraces, GetTrace
 - [x] SQL Trace (ST05) - GetSQLTraceState, ListSQLTraces
+- [x] **RAP OData E2E** - DDLS, SRVD, SRVB create + publish (v2.2.0)
 
 ### In Progress
 - [ ] External Breakpoint Support (API research complete)
@@ -339,7 +351,6 @@ vibing-steampunk/
 - [ ] Transport Management
 - [ ] API Release State (ARS)
 - [ ] Interactive Debugging
-- [ ] RAP/BDEF Support
 
 **Research Reports:**
 - [Native ADT Features](reports/2025-12-05-005-native-adt-features-deep-dive.md) - Comprehensive ADT capability analysis

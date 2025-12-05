@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -525,8 +526,12 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}, nil
 	}
 
-	// 7. Write source
-	err = c.UpdateSource(ctx, objectURL, source, lockResult.LockHandle, transport)
+	// 7. Write source (need source URL, not object URL)
+	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
+	if err != nil {
+		return nil, err
+	}
+	err = c.UpdateSource(ctx, sourceURL, source, lockResult.LockHandle, transport)
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -663,8 +668,12 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		}, nil
 	}
 
-	// 6. Write source
-	err = c.UpdateSource(ctx, objectURL, source, lockResult.LockHandle, transport)
+	// 6. Write source (need source URL, not object URL)
+	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
+	if err != nil {
+		return nil, err
+	}
+	err = c.UpdateSource(ctx, sourceURL, source, lockResult.LockHandle, transport)
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -757,20 +766,38 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 // buildObjectURL constructs the ADT URL for an object type and name
 func (c *Client) buildObjectURL(objType CreatableObjectType, name string) (string, error) {
 	name = strings.ToLower(name)
+	// URL encode to handle namespaced objects like /DMO/...
+	encodedName := url.PathEscape(name)
 	switch objType {
 	case ObjectTypeClass:
-		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name), nil
+		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", encodedName), nil
 	case ObjectTypeProgram:
-		return fmt.Sprintf("/sap/bc/adt/programs/programs/%s", name), nil
+		return fmt.Sprintf("/sap/bc/adt/programs/programs/%s", encodedName), nil
 	case ObjectTypeInterface:
-		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name), nil
+		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", encodedName), nil
 	case ObjectTypeFunctionGroup:
-		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s", name), nil
+		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s", encodedName), nil
 	case ObjectTypeInclude:
-		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", name), nil
+		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", encodedName), nil
+	// RAP object types
+	case ObjectTypeDDLS:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", encodedName), nil
+	case ObjectTypeBDEF:
+		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", encodedName), nil
+	case ObjectTypeSRVD:
+		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", encodedName), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for URL building: %s", objType)
 	}
+}
+
+// buildSourceURL constructs the source URL for an object (object URL + /source/main)
+func (c *Client) buildSourceURL(objType CreatableObjectType, name string) (string, error) {
+	objectURL, err := c.buildObjectURL(objType, name)
+	if err != nil {
+		return "", err
+	}
+	return objectURL + "/source/main", nil
 }
 
 // --- Utility Workflows ---
@@ -916,6 +943,13 @@ func (c *Client) SaveToFile(ctx context.Context, objType CreatableObjectType, ob
 		ext = ".fugr.abap"
 	case ObjectTypeInclude:
 		ext = ".abap"
+	// RAP object types (using ABAPGit-compatible extensions)
+	case ObjectTypeDDLS:
+		ext = ".ddls.asddls"
+	case ObjectTypeBDEF:
+		ext = ".bdef.asbdef"
+	case ObjectTypeSRVD:
+		ext = ".srvd.srvdsrv"
 	default:
 		ext = ".abap"
 	}
@@ -1730,10 +1764,10 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 
 	// Validate object type
 	switch objectType {
-	case "PROG", "CLAS", "INTF":
-		// Supported types
+	case "PROG", "CLAS", "INTF", "DDLS", "BDEF", "SRVD":
+		// Supported types (SRVB is created separately as it has special parameters)
 	default:
-		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF)", objectType)
+		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF, DDLS, BDEF, SRVD)", objectType)
 		return result, nil
 	}
 
@@ -1750,6 +1784,15 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 			objectExists = (err == nil)
 		case "INTF":
 			_, err := c.GetInterface(ctx, name)
+			objectExists = (err == nil)
+		case "DDLS":
+			_, err := c.GetDDLS(ctx, name)
+			objectExists = (err == nil)
+		case "BDEF":
+			_, err := c.GetBDEF(ctx, name)
+			objectExists = (err == nil)
+		case "SRVD":
+			_, err := c.GetSRVD(ctx, name)
 			objectExists = (err == nil)
 		}
 	}
@@ -1938,6 +1981,99 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		if activation.Success {
 			result.Success = true
 			result.Message = "Interface created and activated successfully"
+		} else {
+			result.Message = "Activation failed - check activation messages"
+		}
+
+		return result, nil
+
+	case "DDLS", "BDEF", "SRVD":
+		// Get object type and URL
+		var objType CreatableObjectType
+		var objectURL string
+		switch objectType {
+		case "DDLS":
+			objType = ObjectTypeDDLS
+			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "BDEF":
+			objType = ObjectTypeBDEF
+			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
+		case "SRVD":
+			objType = ObjectTypeSRVD
+			objectURL = GetObjectURL(ObjectTypeSRVD, name, "")
+		}
+		result.ObjectURL = objectURL
+		sourceURL := objectURL + "/source/main"
+
+		// Create object first (creates empty shell)
+		err := c.CreateObject(ctx, CreateObjectOptions{
+			ObjectType:  objType,
+			Name:        name,
+			Description: opts.Description,
+			PackageName: opts.Package,
+			Transport:   opts.Transport,
+		})
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create %s: %v", objectType, err)
+			return result, nil
+		}
+
+		// Syntax check
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			result.Message = fmt.Sprintf("Syntax check failed: %v", err)
+			return result, nil
+		}
+
+		// Check for syntax errors
+		for _, se := range syntaxErrors {
+			if se.Severity == "E" || se.Severity == "A" || se.Severity == "X" {
+				result.SyntaxErrors = syntaxErrors
+				result.Message = "Source has syntax errors - not saved"
+				return result, nil
+			}
+		}
+		result.SyntaxErrors = syntaxErrors
+
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
+			return result, nil
+		}
+
+		defer func() {
+			if !result.Success {
+				c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			}
+		}()
+
+		// Update source
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update source: %v", err)
+			return result, nil
+		}
+
+		// Unlock
+		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
+			return result, nil
+		}
+
+		// Activate
+		activation, err := c.Activate(ctx, objectURL, name)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to activate: %v", err)
+			result.Activation = activation
+			return result, nil
+		}
+
+		result.Activation = activation
+		if activation.Success {
+			result.Success = true
+			result.Message = fmt.Sprintf("%s created and activated successfully", objectType)
 		} else {
 			result.Message = "Activation failed - check activation messages"
 		}
@@ -2340,6 +2476,81 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		if activation.Success {
 			result.Success = true
 			result.Message = "Interface updated and activated successfully"
+		} else {
+			result.Message = "Activation failed - check activation messages"
+		}
+
+		return result, nil
+
+	case "DDLS", "BDEF", "SRVD":
+		// Get object URL
+		var objectURL string
+		switch objectType {
+		case "DDLS":
+			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "BDEF":
+			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
+		case "SRVD":
+			objectURL = GetObjectURL(ObjectTypeSRVD, name, "")
+		}
+		result.ObjectURL = objectURL
+		sourceURL := objectURL + "/source/main"
+
+		// Syntax check
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			result.Message = fmt.Sprintf("Syntax check failed: %v", err)
+			return result, nil
+		}
+
+		for _, se := range syntaxErrors {
+			if se.Severity == "E" || se.Severity == "A" || se.Severity == "X" {
+				result.SyntaxErrors = syntaxErrors
+				result.Message = "Source has syntax errors - not saved"
+				return result, nil
+			}
+		}
+		result.SyntaxErrors = syntaxErrors
+
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
+			return result, nil
+		}
+
+		defer func() {
+			if !result.Success {
+				c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			}
+		}()
+
+		// Update
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update source: %v", err)
+			return result, nil
+		}
+
+		// Unlock
+		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
+			return result, nil
+		}
+
+		// Activate
+		activation, err := c.Activate(ctx, objectURL, name)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to activate: %v", err)
+			result.Activation = activation
+			return result, nil
+		}
+
+		result.Activation = activation
+		if activation.Success {
+			result.Success = true
+			result.Message = fmt.Sprintf("%s updated and activated successfully", objectType)
 		} else {
 			result.Message = "Activation failed - check activation messages"
 		}

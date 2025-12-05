@@ -202,7 +202,8 @@ func (c *Client) GetInclude(ctx context.Context, includeName string) (string, er
 func (c *Client) GetDDLS(ctx context.Context, ddlsName string) (string, error) {
 	ddlsName = strings.ToUpper(ddlsName)
 
-	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s/source/main", ddlsName)
+	// URL encode the name to handle namespaced objects like /DMO/...
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s/source/main", url.PathEscape(ddlsName))
 	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "text/plain",
@@ -222,7 +223,9 @@ func (c *Client) GetDDLS(ctx context.Context, ddlsName string) (string, error) {
 func (c *Client) GetBDEF(ctx context.Context, bdefName string) (string, error) {
 	bdefName = strings.ToUpper(bdefName)
 
-	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/bdef/sources/%s/source/main", bdefName)
+	// URL encode the name to handle namespaced objects like /DMO/...
+	// BDEF endpoint is /sap/bc/adt/bo/behaviordefinitions/{name}/source/main
+	sourcePath := fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s/source/main", url.PathEscape(bdefName))
 	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "text/plain",
@@ -239,7 +242,8 @@ func (c *Client) GetBDEF(ctx context.Context, bdefName string) (string, error) {
 func (c *Client) GetSRVD(ctx context.Context, srvdName string) (string, error) {
 	srvdName = strings.ToUpper(srvdName)
 
-	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s/source/main", srvdName)
+	// URL encode the name to handle namespaced objects like /DMO/...
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s/source/main", url.PathEscape(srvdName))
 	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "text/plain",
@@ -268,10 +272,11 @@ type ServiceBinding struct {
 func (c *Client) GetSRVB(ctx context.Context, srvbName string) (*ServiceBinding, error) {
 	srvbName = strings.ToUpper(srvbName)
 
-	path := fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", srvbName)
+	// URL encode the name to handle namespaced objects like /DMO/...
+	path := fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", url.PathEscape(srvbName))
 	resp, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "*/*", // Service bindings may require accepting any format
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting SRVB metadata: %w", err)
@@ -469,8 +474,8 @@ func (c *Client) GetTable(ctx context.Context, tableName string) (string, error)
 func (c *Client) GetView(ctx context.Context, viewName string) (string, error) {
 	viewName = strings.ToUpper(viewName)
 
-	// Go directly to source/main endpoint
-	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/views/%s/source/main", viewName)
+	// URL encode the name to handle namespaced objects like /DMO/...
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/views/%s/source/main", url.PathEscape(viewName))
 	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
 		Method: http.MethodGet,
 	})

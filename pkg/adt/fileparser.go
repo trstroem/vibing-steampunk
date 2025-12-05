@@ -28,26 +28,31 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 	ext := filepath.Ext(filePath)
 	info := &ABAPFileInfo{FilePath: filePath}
 
-	switch ext {
-	case ".abap":
-		// Check for compound extensions like .clas.abap
-		baseName := filepath.Base(filePath)
-		if strings.HasSuffix(baseName, ".clas.abap") {
-			info.ObjectType = ObjectTypeClass
-		} else if strings.HasSuffix(baseName, ".prog.abap") {
-			info.ObjectType = ObjectTypeProgram
-		} else if strings.HasSuffix(baseName, ".intf.abap") {
-			info.ObjectType = ObjectTypeInterface
-		} else if strings.HasSuffix(baseName, ".fugr.abap") {
-			info.ObjectType = ObjectTypeFunctionGroup
-		} else if strings.HasSuffix(baseName, ".func.abap") {
-			info.ObjectType = ObjectTypeFunctionMod
-		} else {
-			// Fallback: detect from content
-			return parseFromContent(filePath)
-		}
+	// Check for compound extensions
+	baseName := filepath.Base(filePath)
+	switch {
+	case strings.HasSuffix(baseName, ".clas.abap"):
+		info.ObjectType = ObjectTypeClass
+	case strings.HasSuffix(baseName, ".prog.abap"):
+		info.ObjectType = ObjectTypeProgram
+	case strings.HasSuffix(baseName, ".intf.abap"):
+		info.ObjectType = ObjectTypeInterface
+	case strings.HasSuffix(baseName, ".fugr.abap"):
+		info.ObjectType = ObjectTypeFunctionGroup
+	case strings.HasSuffix(baseName, ".func.abap"):
+		info.ObjectType = ObjectTypeFunctionMod
+	// RAP object types (ABAPGit-compatible extensions)
+	case strings.HasSuffix(baseName, ".ddls.asddls"):
+		info.ObjectType = ObjectTypeDDLS
+	case strings.HasSuffix(baseName, ".bdef.asbdef"):
+		info.ObjectType = ObjectTypeBDEF
+	case strings.HasSuffix(baseName, ".srvd.srvdsrv"):
+		info.ObjectType = ObjectTypeSRVD
+	case ext == ".abap":
+		// Generic .abap: detect from content
+		return parseFromContent(filePath)
 	default:
-		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .prog.abap, .intf.abap, .fugr.abap, or .func.abap)", ext)
+		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
 	}
 
 	// 2. Parse file content to extract name and metadata
@@ -98,6 +103,22 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 
 		case ObjectTypeFunctionMod:
 			if name := parseFunctionModuleName(line); name != "" {
+				info.ObjectName = name
+			}
+
+		// RAP object types
+		case ObjectTypeDDLS:
+			if name := parseDDLSName(line); name != "" {
+				info.ObjectName = name
+			}
+
+		case ObjectTypeBDEF:
+			if name := parseBDEFName(line); name != "" {
+				info.ObjectName = name
+			}
+
+		case ObjectTypeSRVD:
+			if name := parseSRVDName(line); name != "" {
 				info.ObjectName = name
 			}
 		}
@@ -229,6 +250,39 @@ func parseFunctionGroupName(line string) string {
 // parseFunctionModuleName extracts function module name from FUNCTION statement
 func parseFunctionModuleName(line string) string {
 	re := regexp.MustCompile(`(?i)^\s*FUNCTION\s+([a-z0-9_/]+)`)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) > 1 {
+		return strings.ToUpper(matches[1])
+	}
+	return ""
+}
+
+// parseDDLSName extracts CDS view name from "define view [entity] <name>" or "@AbapCatalog.viewEnhancementCategory"
+func parseDDLSName(line string) string {
+	// Pattern: define view [entity] NAME
+	re := regexp.MustCompile(`(?i)^\s*define\s+view\s+(?:entity\s+)?([a-z0-9_/]+)`)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) > 1 {
+		return strings.ToUpper(matches[1])
+	}
+	return ""
+}
+
+// parseBDEFName extracts behavior definition name from "define behavior for <name>"
+func parseBDEFName(line string) string {
+	// Pattern: define behavior for NAME
+	re := regexp.MustCompile(`(?i)^\s*define\s+behavior\s+for\s+([a-z0-9_/]+)`)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) > 1 {
+		return strings.ToUpper(matches[1])
+	}
+	return ""
+}
+
+// parseSRVDName extracts service definition name from "define service <name>"
+func parseSRVDName(line string) string {
+	// Pattern: define service NAME
+	re := regexp.MustCompile(`(?i)^\s*define\s+service\s+([a-z0-9_/]+)`)
 	matches := re.FindStringSubmatch(line)
 	if len(matches) > 1 {
 		return strings.ToUpper(matches[1])
