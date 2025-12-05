@@ -43,6 +43,11 @@ func (c *Client) checkPackageSafety(pkg string) error {
 	return c.config.Safety.CheckPackage(pkg)
 }
 
+// Safety returns the safety configuration for checking transport operations.
+func (c *Client) Safety() *SafetyConfig {
+	return &c.config.Safety
+}
+
 // --- Search Operations ---
 
 // SearchObject searches for ABAP objects by name pattern.

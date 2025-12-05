@@ -364,3 +364,384 @@ func parseReleaseResult(data []byte) ([]string, error) {
 
 	return messages, nil
 }
+
+// --- New Transport Management Types and Methods ---
+
+// TransportSummary represents a transport request summary for list operations
+type TransportSummary struct {
+	Number      string `json:"number"`
+	Owner       string `json:"owner"`
+	Description string `json:"description"`
+	Type        string `json:"type"`       // K=Workbench, W=Customizing, S=Task
+	Status      string `json:"status"`     // D=Modifiable, R=Released
+	StatusText  string `json:"statusText"`
+	Target      string `json:"target"`
+	TargetDesc  string `json:"targetDesc"`
+	ChangedAt   string `json:"changedAt"`
+	Client      string `json:"client"`
+}
+
+// TransportDetails represents detailed transport information
+type TransportDetails struct {
+	TransportSummary
+	Tasks   []TransportTaskV2   `json:"tasks,omitempty"`
+	Objects []TransportObjectV2 `json:"objects,omitempty"`
+}
+
+// TransportTaskV2 represents a task within a transport request (extended version)
+type TransportTaskV2 struct {
+	Number      string              `json:"number"`
+	Parent      string              `json:"parent"`
+	Owner       string              `json:"owner"`
+	Description string              `json:"description"`
+	Type        string              `json:"type"`
+	Status      string              `json:"status"`
+	StatusText  string              `json:"statusText"`
+	Objects     []TransportObjectV2 `json:"objects,omitempty"`
+}
+
+// TransportObjectV2 represents an object in a transport (extended version)
+type TransportObjectV2 struct {
+	PgmID    string `json:"pgmid"`  // R3TR, LIMU, CORR
+	Type     string `json:"type"`   // PROG, CLAS, DEVC, etc.
+	Name     string `json:"name"`
+	WBType   string `json:"wbtype"` // PROG/P, CLAS/OC, etc.
+	Info     string `json:"info"`   // "Program", "Class", etc.
+	Position int    `json:"position"`
+}
+
+// CreateTransportOptions for creating transport requests
+type CreateTransportOptions struct {
+	Description    string
+	Package        string
+	TransportLayer string
+	Type           string // "workbench" or "customizing"
+}
+
+// ReleaseTransportOptions for releasing transports
+type ReleaseTransportOptions struct {
+	IgnoreLocks bool
+	SkipATC     bool
+}
+
+// ListTransports returns transport requests for a user
+func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSummary, error) {
+	// Safety check
+	if err := c.config.Safety.CheckTransport("", "ListTransports", false); err != nil {
+		return nil, err
+	}
+
+	if user == "" {
+		user = c.config.Username
+	}
+
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
+		Method: http.MethodGet,
+		Query:  map[string][]string{"user": {strings.ToUpper(user)}},
+		Accept: "application/vnd.sap.adt.transportorganizertree.v1+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing transports: %w", err)
+	}
+
+	return parseTransportList(resp.Body)
+}
+
+func parseTransportList(data []byte) ([]TransportSummary, error) {
+	// Strip namespace prefixes
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
+
+	type request struct {
+		Number      string `xml:"number,attr"`
+		Owner       string `xml:"owner,attr"`
+		Desc        string `xml:"desc,attr"`
+		Type        string `xml:"type,attr"`
+		Status      string `xml:"status,attr"`
+		StatusText  string `xml:"status_text,attr"`
+		Target      string `xml:"target,attr"`
+		TargetDesc  string `xml:"target_desc,attr"`
+		LastChanged string `xml:"lastchanged_timestamp,attr"`
+		Client      string `xml:"source_client,attr"`
+	}
+	type root struct {
+		Requests []request `xml:"request"`
+	}
+
+	var resp root
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
+		return nil, fmt.Errorf("parsing transport list: %w", err)
+	}
+
+	var transports []TransportSummary
+	for _, req := range resp.Requests {
+		transports = append(transports, TransportSummary{
+			Number:      req.Number,
+			Owner:       req.Owner,
+			Description: req.Desc,
+			Type:        req.Type,
+			Status:      req.Status,
+			StatusText:  req.StatusText,
+			Target:      req.Target,
+			TargetDesc:  req.TargetDesc,
+			ChangedAt:   req.LastChanged,
+			Client:      req.Client,
+		})
+	}
+
+	return transports, nil
+}
+
+// GetTransport returns detailed transport information
+func (c *Client) GetTransport(ctx context.Context, number string) (*TransportDetails, error) {
+	// Safety check
+	if err := c.config.Safety.CheckTransport(number, "GetTransport", false); err != nil {
+		return nil, err
+	}
+
+	if number == "" {
+		return nil, fmt.Errorf("transport number is required")
+	}
+
+	path := fmt.Sprintf("/sap/bc/adt/cts/transportrequests/%s", strings.ToUpper(number))
+
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.transportrequests.v1+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting transport %s: %w", number, err)
+	}
+
+	return parseTransportDetail(resp.Body)
+}
+
+func parseTransportDetail(data []byte) (*TransportDetails, error) {
+	// Strip namespace prefixes
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
+
+	type abapObject struct {
+		PgmID    string `xml:"pgmid,attr"`
+		Type     string `xml:"type,attr"`
+		Name     string `xml:"name,attr"`
+		WBType   string `xml:"wbtype,attr"`
+		ObjInfo  string `xml:"obj_info,attr"`
+		Position string `xml:"position,attr"`
+	}
+	type task struct {
+		Number      string       `xml:"number,attr"`
+		Parent      string       `xml:"parent,attr"`
+		Owner       string       `xml:"owner,attr"`
+		Desc        string       `xml:"desc,attr"`
+		Type        string       `xml:"type,attr"`
+		Status      string       `xml:"status,attr"`
+		StatusText  string       `xml:"status_text,attr"`
+		LastChanged string       `xml:"lastchanged_timestamp,attr"`
+		Objects     []abapObject `xml:"abap_object"`
+	}
+	type request struct {
+		Number      string       `xml:"number,attr"`
+		Owner       string       `xml:"owner,attr"`
+		Desc        string       `xml:"desc,attr"`
+		Type        string       `xml:"type,attr"`
+		Status      string       `xml:"status,attr"`
+		StatusText  string       `xml:"status_text,attr"`
+		Target      string       `xml:"target,attr"`
+		TargetDesc  string       `xml:"target_desc,attr"`
+		Client      string       `xml:"source_client,attr"`
+		LastChanged string       `xml:"lastchanged_timestamp,attr"`
+		Objects     []abapObject `xml:"abap_object"`
+		AllObjects  struct {
+			Objects []abapObject `xml:"abap_object"`
+		} `xml:"all_objects"`
+		Tasks []task `xml:"task"`
+	}
+	type root struct {
+		Request *request `xml:"request"`
+	}
+
+	var resp root
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
+		return nil, fmt.Errorf("parsing transport: %w", err)
+	}
+
+	if resp.Request == nil {
+		return nil, fmt.Errorf("transport not found in response")
+	}
+
+	req := resp.Request
+	t := &TransportDetails{
+		TransportSummary: TransportSummary{
+			Number:      req.Number,
+			Owner:       req.Owner,
+			Description: req.Desc,
+			Type:        req.Type,
+			Status:      req.Status,
+			StatusText:  req.StatusText,
+			Target:      req.Target,
+			TargetDesc:  req.TargetDesc,
+			ChangedAt:   req.LastChanged,
+			Client:      req.Client,
+		},
+	}
+
+	// Convert objects
+	objects := req.Objects
+	if len(req.AllObjects.Objects) > 0 {
+		objects = req.AllObjects.Objects
+	}
+	for _, obj := range objects {
+		pos := 0
+		if obj.Position != "" {
+			fmt.Sscanf(obj.Position, "%d", &pos)
+		}
+		t.Objects = append(t.Objects, TransportObjectV2{
+			PgmID:    obj.PgmID,
+			Type:     obj.Type,
+			Name:     obj.Name,
+			WBType:   obj.WBType,
+			Info:     obj.ObjInfo,
+			Position: pos,
+		})
+	}
+
+	// Convert tasks
+	for _, task := range req.Tasks {
+		tt := TransportTaskV2{
+			Number:      task.Number,
+			Parent:      task.Parent,
+			Owner:       task.Owner,
+			Description: task.Desc,
+			Type:        task.Type,
+			Status:      task.Status,
+			StatusText:  task.StatusText,
+		}
+		for _, obj := range task.Objects {
+			pos := 0
+			if obj.Position != "" {
+				fmt.Sscanf(obj.Position, "%d", &pos)
+			}
+			tt.Objects = append(tt.Objects, TransportObjectV2{
+				PgmID:    obj.PgmID,
+				Type:     obj.Type,
+				Name:     obj.Name,
+				WBType:   obj.WBType,
+				Info:     obj.ObjInfo,
+				Position: pos,
+			})
+		}
+		t.Tasks = append(t.Tasks, tt)
+	}
+
+	return t, nil
+}
+
+// CreateTransportV2 creates a new transport request with options
+func (c *Client) CreateTransportV2(ctx context.Context, opts CreateTransportOptions) (string, error) {
+	// Safety check
+	if err := c.config.Safety.CheckTransport("", "CreateTransport", true); err != nil {
+		return "", err
+	}
+
+	if opts.Description == "" {
+		return "", fmt.Errorf("description is required")
+	}
+	if opts.Package == "" {
+		return "", fmt.Errorf("package is required")
+	}
+
+	// Default to workbench request
+	reqType := "K"
+	if strings.ToLower(opts.Type) == "customizing" {
+		reqType = "W"
+	}
+
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm">
+  <tm:request tm:desc="%s" tm:type="%s" tm:target="" tm:cts_project="">
+    <tm:abap_object tm:pgmid="R3TR" tm:type="DEVC" tm:name="%s"/>
+  </tm:request>
+</tm:root>`,
+		escapeXMLAttr(opts.Description),
+		reqType,
+		strings.ToUpper(opts.Package))
+
+	query := make(map[string][]string)
+	if opts.TransportLayer != "" {
+		query["transportLayer"] = []string{opts.TransportLayer}
+	}
+
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transports", &RequestOptions{
+		Method:      http.MethodPost,
+		Query:       query,
+		Body:        []byte(body),
+		ContentType: "application/vnd.sap.as+xml",
+		Accept:      "text/plain",
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating transport: %w", err)
+	}
+
+	// Response is plain text with transport number
+	transportNumber := strings.TrimSpace(string(resp.Body))
+	return transportNumber, nil
+}
+
+// ReleaseTransportV2 releases a transport request with options
+func (c *Client) ReleaseTransportV2(ctx context.Context, number string, opts ReleaseTransportOptions) error {
+	// Safety check
+	if err := c.config.Safety.CheckTransport(number, "ReleaseTransport", true); err != nil {
+		return err
+	}
+
+	if number == "" {
+		return fmt.Errorf("transport number is required")
+	}
+
+	// Determine release action
+	action := "newreleasejobs"
+	if opts.IgnoreLocks {
+		action = "relwithignlock"
+	}
+	if opts.SkipATC {
+		action = "relObjigchkatc"
+	}
+
+	path := fmt.Sprintf("/sap/bc/adt/cts/transportrequests/%s/%s", strings.ToUpper(number), action)
+
+	_, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodPost,
+		Accept: "application/vnd.sap.adt.transportrequests.v1+xml",
+	})
+	if err != nil {
+		return fmt.Errorf("releasing transport %s: %w", number, err)
+	}
+
+	return nil
+}
+
+// DeleteTransport deletes a transport request
+func (c *Client) DeleteTransport(ctx context.Context, number string) error {
+	// Safety check
+	if err := c.config.Safety.CheckTransport(number, "DeleteTransport", true); err != nil {
+		return err
+	}
+
+	if number == "" {
+		return fmt.Errorf("transport number is required")
+	}
+
+	path := fmt.Sprintf("/sap/bc/adt/cts/transportrequests/%s", strings.ToUpper(number))
+
+	_, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodDelete,
+	})
+	if err != nil {
+		return fmt.Errorf("deleting transport %s: %w", number, err)
+	}
+
+	return nil
+}
+
+// escapeXMLAttr is defined in ui5.go

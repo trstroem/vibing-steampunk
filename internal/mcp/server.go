@@ -48,7 +48,9 @@ type Config struct {
 	AllowedOps       string
 	DisallowedOps    string
 	AllowedPackages  []string
-	EnableTransports bool // Explicitly enable transport management (default: disabled)
+	EnableTransports  bool     // Explicitly enable transport management (default: disabled)
+	TransportReadOnly bool     // Only allow read operations on transports (list, get)
+	AllowedTransports []string // Whitelist specific transports (supports wildcards like "A4HK*")
 }
 
 // NewServer creates a new MCP server for ABAP ADT tools.
@@ -88,6 +90,12 @@ func NewServer(cfg *Config) *Server {
 	if cfg.EnableTransports {
 		safety.EnableTransports = true
 	}
+	if cfg.TransportReadOnly {
+		safety.TransportReadOnly = true
+	}
+	if len(cfg.AllowedTransports) > 0 {
+		safety.AllowedTransports = cfg.AllowedTransports
+	}
 	opts = append(opts, adt.WithSafety(safety))
 
 	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
@@ -124,9 +132,10 @@ func (s *Server) ServeStdio() error {
 //   - "T" = Test tools: RunUnitTests, RunATCCheck (2 tools)
 //   - "H" = HANA/AMDP debugger (5 tools)
 //   - "D" = ABAP Debugger (9 tools: external breakpoints + debugger session)
+//   - "C" = CTS/Transport tools (5 tools: list, get, create, release, delete)
 func (s *Server) registerTools(mode string, disabledGroups string) {
 	// Define tool groups for selective disablement
-	// Short codes: 5/U=UI5, T=Tests, H=HANA, D=Debug
+	// Short codes: 5/U=UI5, T=Tests, H=HANA, D=Debug, C=CTS
 	toolGroups := map[string][]string{
 		"5": { // UI5/BSP tools (also mapped as "U") - read-only, write ops need custom plugin
 			"UI5ListApps", "UI5GetApp", "UI5GetFileContent",
@@ -142,6 +151,10 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 			"SetExternalBreakpoint", "GetExternalBreakpoints", "DeleteExternalBreakpoint",
 			"DebuggerListen", "DebuggerAttach", "DebuggerDetach",
 			"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables",
+		},
+		"C": { // CTS/Transport tools
+			"ListTransports", "GetTransport",
+			"CreateTransport", "ReleaseTransport", "DeleteTransport",
 		},
 	}
 	// Map "U" to same tools as "5"
@@ -247,6 +260,11 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"AMDPDebuggerStop":   true, // Stop AMDP debug session
 		"AMDPDebuggerStep":   true, // Step through AMDP code
 		"AMDPGetVariables":   true, // Get AMDP variable values
+
+		// CTS/Transport Management (2 read-only in focused mode)
+		// Write operations (Create, Release, Delete) only in expert mode
+		"ListTransports": true, // List transport requests
+		"GetTransport":   true, // Get transport details with objects
 	}
 
 	// Helper to check if tool should be registered
@@ -1490,39 +1508,6 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		), s.handleGetTransportInfo)
 	}
 
-	// CreateTransport - create a new transport request
-	if shouldRegister("CreateTransport") {
-		s.mcpServer.AddTool(mcp.NewTool("CreateTransport",
-			mcp.WithDescription("Create a new transport request (requires --enable-transports flag). Returns the transport number on success."),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object to transport"),
-			),
-			mcp.WithString("description",
-				mcp.Required(),
-				mcp.Description("Transport request description"),
-			),
-			mcp.WithString("dev_class",
-				mcp.Required(),
-				mcp.Description("Development class/package of the object"),
-			),
-		), s.handleCreateTransport)
-	}
-
-	// ReleaseTransport - release a transport request
-	if shouldRegister("ReleaseTransport") {
-		s.mcpServer.AddTool(mcp.NewTool("ReleaseTransport",
-			mcp.WithDescription("Release a transport request (requires --enable-transports flag). Returns release reports and messages."),
-			mcp.WithString("transport_number",
-				mcp.Required(),
-				mcp.Description("Transport request number (e.g., DEVK900001)"),
-			),
-			mcp.WithBoolean("ignore_locks",
-				mcp.Description("Ignore locks and release anyway (default: false)"),
-			),
-		), s.handleReleaseTransport)
-	}
-
 	// ExecuteABAP - execute arbitrary ABAP code via unit test wrapper (Expert mode only)
 	if shouldRegister("ExecuteABAP") {
 		s.mcpServer.AddTool(mcp.NewTool("ExecuteABAP",
@@ -1729,6 +1714,78 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 				mcp.Description("Variable IDs to retrieve"),
 			),
 		), s.handleAMDPGetVariables)
+	}
+
+	// CTS/Transport Management Tools
+
+	// ListTransports
+	if shouldRegister("ListTransports") {
+		s.mcpServer.AddTool(mcp.NewTool("ListTransports",
+			mcp.WithDescription("List transport requests. Returns modifiable transports for a user. Requires --enable-transports flag."),
+			mcp.WithString("user",
+				mcp.Description("Username to list transports for (default: current user, '*' for all users)"),
+			),
+		), s.handleListTransports)
+	}
+
+	// GetTransport
+	if shouldRegister("GetTransport") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTransport",
+			mcp.WithDescription("Get detailed transport information including objects and tasks. Requires --enable-transports flag."),
+			mcp.WithString("transport",
+				mcp.Required(),
+				mcp.Description("Transport request number (e.g., 'A4HK900094')"),
+			),
+		), s.handleGetTransport)
+	}
+
+	// CreateTransport (expert mode only)
+	if shouldRegister("CreateTransport") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateTransport",
+			mcp.WithDescription("Create a new transport request. Requires --enable-transports flag and not --transport-read-only."),
+			mcp.WithString("description",
+				mcp.Required(),
+				mcp.Description("Transport description"),
+			),
+			mcp.WithString("package",
+				mcp.Required(),
+				mcp.Description("Target package (DEVCLASS)"),
+			),
+			mcp.WithString("transport_layer",
+				mcp.Description("Transport layer (optional)"),
+			),
+			mcp.WithString("type",
+				mcp.Description("Type: 'workbench' (default) or 'customizing'"),
+			),
+		), s.handleCreateTransport)
+	}
+
+	// ReleaseTransport (expert mode only)
+	if shouldRegister("ReleaseTransport") {
+		s.mcpServer.AddTool(mcp.NewTool("ReleaseTransport",
+			mcp.WithDescription("Release a transport request. This action is IRREVERSIBLE. Requires --enable-transports flag and not --transport-read-only."),
+			mcp.WithString("transport",
+				mcp.Required(),
+				mcp.Description("Transport request number"),
+			),
+			mcp.WithBoolean("ignore_locks",
+				mcp.Description("Release even with locked objects (default: false)"),
+			),
+			mcp.WithBoolean("skip_atc",
+				mcp.Description("Skip ATC quality checks (default: false)"),
+			),
+		), s.handleReleaseTransport)
+	}
+
+	// DeleteTransport (expert mode only)
+	if shouldRegister("DeleteTransport") {
+		s.mcpServer.AddTool(mcp.NewTool("DeleteTransport",
+			mcp.WithDescription("Delete a transport request. Only modifiable transports can be deleted. Requires --enable-transports flag and not --transport-read-only."),
+			mcp.WithString("transport",
+				mcp.Required(),
+				mcp.Description("Transport request number"),
+			),
+		), s.handleDeleteTransport)
 	}
 
 }
@@ -3770,59 +3827,6 @@ func (s *Server) handleGetTransportInfo(ctx context.Context, request mcp.CallToo
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
-	if !ok || objectURL == "" {
-		return newToolResultError("object_url is required"), nil
-	}
-
-	description, ok := request.Params.Arguments["description"].(string)
-	if !ok || description == "" {
-		return newToolResultError("description is required"), nil
-	}
-
-	devClass, ok := request.Params.Arguments["dev_class"].(string)
-	if !ok || devClass == "" {
-		return newToolResultError("dev_class is required"), nil
-	}
-
-	transportNumber, err := s.adtClient.CreateTransport(ctx, objectURL, description, devClass)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("CreateTransport failed: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Transport request created: %s", transportNumber)), nil
-}
-
-func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	transportNumber, ok := request.Params.Arguments["transport_number"].(string)
-	if !ok || transportNumber == "" {
-		return newToolResultError("transport_number is required"), nil
-	}
-
-	ignoreLocks := false
-	if il, ok := request.Params.Arguments["ignore_locks"].(bool); ok {
-		ignoreLocks = il
-	}
-
-	messages, err := s.adtClient.ReleaseTransport(ctx, transportNumber, ignoreLocks)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("ReleaseTransport failed: %v", err)), nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Transport %s released.\n\n", transportNumber))
-
-	if len(messages) > 0 {
-		sb.WriteString("Release Messages:\n")
-		for _, msg := range messages {
-			sb.WriteString(fmt.Sprintf("  %s\n", msg))
-		}
-	}
-
-	return mcp.NewToolResultText(sb.String()), nil
-}
-
 // handleExecuteABAP executes arbitrary ABAP code via unit test wrapper.
 func (s *Server) handleExecuteABAP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	code, ok := request.Params.Arguments["code"].(string)
@@ -4620,4 +4624,135 @@ func (s *Server) handleAMDPGetVariables(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// Transport Management Handlers
+
+func (s *Server) handleListTransports(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Check safety config for transport operations
+	if err := s.adtClient.Safety().CheckTransport("", "ListTransports", false); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	user, _ := request.Params.Arguments["user"].(string)
+
+	transports, err := s.adtClient.ListTransports(ctx, user)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("ListTransports failed: %v", err)), nil
+	}
+
+	if len(transports) == 0 {
+		return mcp.NewToolResultText("No modifiable transports found."), nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(transports, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+func (s *Server) handleGetTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	transport, ok := request.Params.Arguments["transport"].(string)
+	if !ok || transport == "" {
+		return newToolResultError("transport is required"), nil
+	}
+
+	// Check safety config for transport operations
+	if err := s.adtClient.Safety().CheckTransport(transport, "GetTransport", false); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	result, err := s.adtClient.GetTransport(ctx, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetTransport failed: %v", err)), nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Check safety config for transport write operations
+	if err := s.adtClient.Safety().CheckTransport("", "CreateTransport", true); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	description, ok := request.Params.Arguments["description"].(string)
+	if !ok || description == "" {
+		return newToolResultError("description is required"), nil
+	}
+
+	pkg, ok := request.Params.Arguments["package"].(string)
+	if !ok || pkg == "" {
+		return newToolResultError("package is required"), nil
+	}
+
+	transportLayer, _ := request.Params.Arguments["transport_layer"].(string)
+	transportType, _ := request.Params.Arguments["type"].(string)
+
+	opts := adt.CreateTransportOptions{
+		Description:    description,
+		Package:        pkg,
+		TransportLayer: transportLayer,
+		Type:           transportType,
+	}
+
+	transportNumber, err := s.adtClient.CreateTransportV2(ctx, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("CreateTransport failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Transport created: %s", transportNumber)), nil
+}
+
+func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	transport, ok := request.Params.Arguments["transport"].(string)
+	if !ok || transport == "" {
+		return newToolResultError("transport is required"), nil
+	}
+
+	// Check safety config for transport write operations
+	if err := s.adtClient.Safety().CheckTransport(transport, "ReleaseTransport", true); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	ignoreLocks, _ := request.Params.Arguments["ignore_locks"].(bool)
+	skipATC, _ := request.Params.Arguments["skip_atc"].(bool)
+
+	opts := adt.ReleaseTransportOptions{
+		IgnoreLocks: ignoreLocks,
+		SkipATC:     skipATC,
+	}
+
+	err := s.adtClient.ReleaseTransportV2(ctx, transport, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("ReleaseTransport failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Transport %s released successfully.", transport)), nil
+}
+
+func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	transport, ok := request.Params.Arguments["transport"].(string)
+	if !ok || transport == "" {
+		return newToolResultError("transport is required"), nil
+	}
+
+	// Check safety config for transport write operations
+	if err := s.adtClient.Safety().CheckTransport(transport, "DeleteTransport", true); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+
+	err := s.adtClient.DeleteTransport(ctx, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("DeleteTransport failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Transport %s deleted successfully.", transport)), nil
 }

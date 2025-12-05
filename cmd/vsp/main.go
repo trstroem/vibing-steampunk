@@ -76,6 +76,8 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.DisallowedOps, "disallowed-ops", "", "Blacklist of operation types to block (e.g., \"CDUA\" for Create, Delete, Update, Activate)")
 	rootCmd.Flags().StringSliceVar(&cfg.AllowedPackages, "allowed-packages", nil, "Restrict operations to specific packages (comma-separated, supports wildcards like Z*)")
 	rootCmd.Flags().BoolVar(&cfg.EnableTransports, "enable-transports", false, "Enable transport management operations (disabled by default for safety)")
+	rootCmd.Flags().BoolVar(&cfg.TransportReadOnly, "transport-read-only", false, "Only allow read operations on transports (list, get)")
+	rootCmd.Flags().StringSliceVar(&cfg.AllowedTransports, "allowed-transports", nil, "Restrict transport operations to specific transports (comma-separated, supports wildcards like A4HK*)")
 
 	// Mode options
 	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (19 essential tools) or expert (all 45 tools)")
@@ -99,6 +101,8 @@ func init() {
 	viper.BindPFlag("disallowed-ops", rootCmd.Flags().Lookup("disallowed-ops"))
 	viper.BindPFlag("allowed-packages", rootCmd.Flags().Lookup("allowed-packages"))
 	viper.BindPFlag("enable-transports", rootCmd.Flags().Lookup("enable-transports"))
+	viper.BindPFlag("transport-read-only", rootCmd.Flags().Lookup("transport-read-only"))
+	viper.BindPFlag("allowed-transports", rootCmd.Flags().Lookup("allowed-transports"))
 	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
 	viper.BindPFlag("disabled-groups", rootCmd.Flags().Lookup("disabled-groups"))
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
@@ -257,6 +261,14 @@ func resolveConfig(cmd *cobra.Command) {
 	}
 	if !cmd.Flags().Changed("enable-transports") {
 		cfg.EnableTransports = viper.GetBool("ENABLE_TRANSPORTS")
+	}
+	if !cmd.Flags().Changed("transport-read-only") {
+		cfg.TransportReadOnly = viper.GetBool("TRANSPORT_READ_ONLY")
+	}
+	if !cmd.Flags().Changed("allowed-transports") {
+		if transports := viper.GetStringSlice("ALLOWED_TRANSPORTS"); len(transports) > 0 {
+			cfg.AllowedTransports = transports
+		}
 	}
 }
 

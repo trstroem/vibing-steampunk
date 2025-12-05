@@ -134,6 +134,22 @@ func WithEnableTransports() Option {
 	}
 }
 
+// WithTransportReadOnly allows only read operations on transports (list, get).
+// Create, release, delete operations will be blocked.
+func WithTransportReadOnly() Option {
+	return func(c *Config) {
+		c.Safety.TransportReadOnly = true
+	}
+}
+
+// WithAllowedTransports restricts transport operations to specific transports.
+// Supports wildcards: "A4HK*" matches all transports starting with A4HK.
+func WithAllowedTransports(transports ...string) Option {
+	return func(c *Config) {
+		c.Safety.AllowedTransports = transports
+	}
+}
+
 // HasBasicAuth returns true if username and password are configured.
 func (c *Config) HasBasicAuth() bool {
 	return c.Username != "" && c.Password != ""

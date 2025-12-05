@@ -49,6 +49,16 @@ type SafetyConfig struct {
 	// By default false - requires conscious opt-in to work with transports
 	// When false, all transport operations (create, release, list) are blocked
 	EnableTransports bool
+
+	// TransportReadOnly allows only read operations on transports (list, get)
+	// When true, create/release/delete operations are blocked
+	TransportReadOnly bool
+
+	// AllowedTransports restricts transport operations to specific transports
+	// Example: []string{"A4HK900110", "A4HK*", "DEV*"}
+	// Supports wildcards: "A4HK*" matches all transports starting with A4HK
+	// Empty = all transports allowed (within other restrictions)
+	AllowedTransports []string
 }
 
 // DefaultSafetyConfig returns a safe default configuration (read-only, no free SQL)
@@ -184,6 +194,71 @@ func (s *SafetyConfig) CheckPackage(pkg string) error {
 	return nil
 }
 
+// IsTransportAllowed checks if operations on a given transport are allowed
+func (s *SafetyConfig) IsTransportAllowed(transport string) bool {
+	// First check if transports are enabled at all
+	if !s.EnableTransports {
+		return false
+	}
+
+	// Empty AllowedTransports = all transports allowed
+	if len(s.AllowedTransports) == 0 {
+		return true
+	}
+
+	transport = strings.ToUpper(transport)
+
+	for _, allowed := range s.AllowedTransports {
+		allowed = strings.ToUpper(allowed)
+
+		// Exact match
+		if allowed == transport {
+			return true
+		}
+
+		// Wildcard match (e.g., "A4HK*" matches "A4HK900110", etc.)
+		if strings.HasSuffix(allowed, "*") {
+			prefix := strings.TrimSuffix(allowed, "*")
+			if strings.HasPrefix(transport, prefix) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// IsTransportWriteAllowed checks if write operations on transports are allowed
+func (s *SafetyConfig) IsTransportWriteAllowed() bool {
+	if !s.EnableTransports {
+		return false
+	}
+	return !s.TransportReadOnly
+}
+
+// CheckTransport returns an error if the transport operation is not allowed
+func (s *SafetyConfig) CheckTransport(transport, opName string, isWrite bool) error {
+	// Check if transports are enabled
+	if !s.EnableTransports {
+		return fmt.Errorf("transport operation '%s' is blocked: transports not enabled (use --enable-transports or SAP_ENABLE_TRANSPORTS=true)", opName)
+	}
+
+	// Check write permissions
+	if isWrite && s.TransportReadOnly {
+		return fmt.Errorf("transport write operation '%s' is blocked: transport read-only mode enabled", opName)
+	}
+
+	// Check transport whitelist (only for specific transport operations, not for list)
+	if transport != "" && transport != "*" && len(s.AllowedTransports) > 0 {
+		if !s.IsTransportAllowed(transport) {
+			return fmt.Errorf("operation '%s' on transport '%s' is blocked by safety configuration (allowed: %v)",
+				opName, transport, s.AllowedTransports)
+		}
+	}
+
+	return nil
+}
+
 // String returns a human-readable description of the safety configuration
 func (s *SafetyConfig) String() string {
 	var parts []string
@@ -210,6 +285,16 @@ func (s *SafetyConfig) String() string {
 
 	if len(s.AllowedPackages) > 0 {
 		parts = append(parts, fmt.Sprintf("AllowedPackages=%v", s.AllowedPackages))
+	}
+
+	if s.EnableTransports {
+		parts = append(parts, "TRANSPORTS-ENABLED")
+		if s.TransportReadOnly {
+			parts = append(parts, "TRANSPORT-READ-ONLY")
+		}
+		if len(s.AllowedTransports) > 0 {
+			parts = append(parts, fmt.Sprintf("AllowedTransports=%v", s.AllowedTransports))
+		}
 	}
 
 	if len(parts) == 0 {

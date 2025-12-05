@@ -339,32 +339,47 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 74 (37 focused, 74 expert) |
-| **Unit Tests** | 161 |
+| **Tools** | 76 (49 focused, 76 expert) |
+| **Unit Tests** | 270+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
 <details>
 <summary><strong>Roadmap</strong></summary>
 
-### Completed
+### Completed (v2.10.1)
 - [x] DSL & Workflow Engine
-- [x] CDS Dependency Analysis
-- [x] ATC Code Quality Checks
+- [x] CDS Dependency Analysis (`GetCDSDependencies`)
+- [x] ATC Code Quality Checks (`RunATCCheck`)
 - [x] ExecuteABAP (code injection via unit tests)
-- [x] System Info & Components
-- [x] Call Graph & Object Structure
-- [x] Short Dumps / Runtime Errors (RABAX) - GetDumps, GetDump
-- [x] ABAP Profiler / Traces (ATRA) - ListTraces, GetTrace
-- [x] SQL Trace (ST05) - GetSQLTraceState, ListSQLTraces
+- [x] System Info & Components (`GetSystemInfo`, `GetInstalledComponents`)
+- [x] Call Graph & Object Structure (`GetCallGraph`, `GetObjectStructure`)
+- [x] Short Dumps / Runtime Errors - `GetDumps`, `GetDump` (RABAX)
+- [x] ABAP Profiler / Traces - `ListTraces`, `GetTrace` (ATRA)
+- [x] SQL Trace - `GetSQLTraceState`, `ListSQLTraces` (ST05)
 - [x] **RAP OData E2E** - DDLS, SRVD, SRVB create + publish (v2.6.0)
-- [x] **External Breakpoints** - Set/get/delete line, exception, statement, message breakpoints (v2.7.0)
+- [x] **External Breakpoints** - Line, exception, statement, message (v2.7.0)
 - [x] **Debug Session** - Listener, attach, detach, step, stack, variables (v2.8.0)
+- [x] **Tool Group Disablement** - `--disabled-groups 5THD` (v2.10.0)
+- [x] **UI5/BSP Read** - `UI5ListApps`, `UI5GetApp`, `UI5GetFileContent` (v2.10.1)
+
+### Parked (Needs Further Work)
+- [ ] **AMDP Debugger** - API works, needs HTTP session persistence ([Report 019](reports/2025-12-05-019-amdp-session-architecture.md))
+- [ ] **UI5/BSP Write** - ADT filestore is read-only, needs custom plugin via `/UI5/CL_REPOSITORY_LOAD`
 
 ### Planned
-- [ ] Transport Management
-- [ ] API Release State (ARS)
+- [ ] Transport Management (`SCTS_*` tables, `/sap/bc/adt/cts/transports`)
+- [ ] API Release State (ARS) - Contract stability checks
+- [ ] Message Server Logs
+- [ ] Background Job Management
+
+### Future Considerations
+- [ ] AMDP Session Persistence (enable full HANA debugging)
+- [ ] Graph Traversal & Analysis (code dependency graphs)
+- [ ] Test Intelligence (smart test execution based on changes)
+- [ ] Standard API Surface Scraper
 
 **Research Reports:**
+- [AMDP Session Architecture](reports/2025-12-05-019-amdp-session-architecture.md) - Session binding analysis & solutions
 - [Native ADT Features](reports/2025-12-05-005-native-adt-features-deep-dive.md) - Comprehensive ADT capability analysis
 - [ADT Debugger API](reports/2025-12-05-012-adt-debugger-api-deep-dive.md) - External debugging REST API
 - [AI-Powered RCA](reports/2025-12-05-013-ai-powered-rca-workflows.md) - Vision for AI-assisted debugging
