@@ -3,7 +3,7 @@
 **AI-Agentic Development Unlocked for ABAP** — ECC, S/4HANA, everywhere ADT is available.
 
 > **ADT ↔ MCP Bridge**: Gives Claude (and other AI assistants) full access to SAP ADT APIs.
-> Read code, write code, debug, deploy, run tests — all through natural language.
+> Read code, write code, debug, deploy, run tests — all through natural language (or DSL for automation).
 >
 > See also: [OData ↔ MCP Bridge](https://github.com/oisee/odata_mcp_go) for SAP data access.
 
