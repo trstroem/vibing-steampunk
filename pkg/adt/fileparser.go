@@ -14,8 +14,9 @@ type ABAPFileInfo struct {
 	FilePath          string
 	ObjectType        CreatableObjectType
 	ObjectName        string
-	Description       string // Parsed from comments if available
-	HasDefinition     bool   // For classes
+	Description       string           // Parsed from comments if available
+	ClassIncludeType  ClassIncludeType // For class includes (testclasses, definitions, etc.)
+	HasDefinition     bool             // For classes
 	HasImplementation bool
 	HasTestClasses    bool
 }
@@ -29,10 +30,26 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 	info := &ABAPFileInfo{FilePath: filePath}
 
 	// Check for compound extensions
+	// Note: More specific suffixes must come BEFORE less specific ones
 	baseName := filepath.Base(filePath)
 	switch {
+	// Class includes (must be before .clas.abap)
+	case strings.HasSuffix(baseName, ".clas.testclasses.abap"):
+		info.ObjectType = ObjectTypeClass
+		info.ClassIncludeType = ClassIncludeTestClasses
+	case strings.HasSuffix(baseName, ".clas.locals_def.abap"):
+		info.ObjectType = ObjectTypeClass
+		info.ClassIncludeType = ClassIncludeDefinitions
+	case strings.HasSuffix(baseName, ".clas.locals_imp.abap"):
+		info.ObjectType = ObjectTypeClass
+		info.ClassIncludeType = ClassIncludeImplementations
+	case strings.HasSuffix(baseName, ".clas.macros.abap"):
+		info.ObjectType = ObjectTypeClass
+		info.ClassIncludeType = ClassIncludeMacros
+	// Main class
 	case strings.HasSuffix(baseName, ".clas.abap"):
 		info.ObjectType = ObjectTypeClass
+		info.ClassIncludeType = ClassIncludeMain
 	case strings.HasSuffix(baseName, ".prog.abap"):
 		info.ObjectType = ObjectTypeProgram
 	case strings.HasSuffix(baseName, ".intf.abap"):
@@ -52,7 +69,7 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 		// Generic .abap: detect from content
 		return parseFromContent(filePath)
 	default:
-		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
+		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
 	}
 
 	// 2. Parse file content to extract name and metadata

@@ -1203,7 +1203,7 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 	), s.handleSaveToFile)
 	}
 
-	// ImportFromFile (alias for DeployFromFile - File → SAP)
+	// ImportFromFile (alias for DeployFromFile - File → SAP, supports class includes)
 	if shouldRegister("ImportFromFile") {
 		s.registerImportFromFile()
 	}
@@ -2892,6 +2892,12 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		outputPath = p
 	}
 
+	// Check for include parameter (for class includes)
+	includeStr := ""
+	if inc, ok := request.Params.Arguments["include"].(string); ok {
+		includeStr = strings.ToLower(inc)
+	}
+
 	// Parse object type - support both short (PROG) and full (PROG/P) format
 	var objType adt.CreatableObjectType
 	switch strings.ToUpper(objTypeStr) {
@@ -2916,6 +2922,30 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		objType = adt.ObjectTypeSRVD
 	default:
 		objType = adt.CreatableObjectType(objTypeStr)
+	}
+
+	// Handle class includes
+	if objType == adt.ObjectTypeClass && includeStr != "" && includeStr != "main" {
+		var includeType adt.ClassIncludeType
+		switch includeStr {
+		case "testclasses":
+			includeType = adt.ClassIncludeTestClasses
+		case "definitions":
+			includeType = adt.ClassIncludeDefinitions
+		case "implementations":
+			includeType = adt.ClassIncludeImplementations
+		case "macros":
+			includeType = adt.ClassIncludeMacros
+		default:
+			return newToolResultError(fmt.Sprintf("invalid include type: %s (expected: main, testclasses, definitions, implementations, macros)", includeStr)), nil
+		}
+
+		result, err := s.adtClient.SaveClassIncludeToFile(ctx, objectName, includeType, outputPath)
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("SaveClassIncludeToFile failed: %v", err)), nil
+		}
+		output, _ := json.MarshalIndent(result, "", "  ")
+		return mcp.NewToolResultText(string(output)), nil
 	}
 
 	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, outputPath)
@@ -3597,13 +3627,13 @@ func (s *Server) registerGrepPackages() {
 // registerImportFromFile registers the ImportFromFile tool (alias for DeployFromFile)
 func (s *Server) registerImportFromFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ImportFromFile",
-		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type, creates or updates, activates. Supports: programs, classes, interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD)."),
+		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type from file extension, creates or updates, activates. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For class includes (.clas.testclasses.abap, .clas.locals_def.abap, etc.), the parent class must exist."),
 		mcp.WithString("file_path",
 			mcp.Required(),
-			mcp.Description("Absolute path to ABAP source file (.prog.abap, .clas.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, .srvd.srvdsrv)"),
+			mcp.Description("Absolute path to ABAP source file. Supported extensions: .prog.abap, .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, .srvd.srvdsrv"),
 		),
 		mcp.WithString("package_name",
-			mcp.Description("Target package name (required for new objects)"),
+			mcp.Description("Target package name (required for new objects, not needed for class includes)"),
 		),
 		mcp.WithString("transport",
 			mcp.Description("Transport request number"),
@@ -3614,7 +3644,7 @@ func (s *Server) registerImportFromFile() {
 // registerExportToFile registers the ExportToFile tool (alias for SaveToFile)
 func (s *Server) registerExportToFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ExportToFile",
-		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes, interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD)."),
+		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For classes, use 'include' parameter to export specific includes (testclasses, definitions, implementations, macros)."),
 		mcp.WithString("object_type",
 			mcp.Required(),
 			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD"),
@@ -3626,6 +3656,9 @@ func (s *Server) registerExportToFile() {
 		mcp.WithString("output_dir",
 			mcp.Required(),
 			mcp.Description("Output directory path (must exist)"),
+		),
+		mcp.WithString("include",
+			mcp.Description("For CLAS only: include type to export. Values: main (default), testclasses, definitions, implementations, macros. Creates abapGit-compatible files (.clas.testclasses.abap, .clas.locals_def.abap, etc.)"),
 		),
 		mcp.WithString("parent",
 			mcp.Description("Function group name (required for FUNC type)"),

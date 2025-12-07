@@ -602,6 +602,11 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		return nil, fmt.Errorf("parsing file: %w", err)
 	}
 
+	// Check if this is a class include (testclasses, locals_def, etc.)
+	isClassInclude := info.ObjectType == ObjectTypeClass &&
+		info.ClassIncludeType != "" &&
+		info.ClassIncludeType != ClassIncludeMain
+
 	// 2. Read source code
 	sourceBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -609,7 +614,7 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 	}
 	source := string(sourceBytes)
 
-	// 3. Build object URL
+	// 3. Build object URL (for class includes, this is the parent class URL)
 	objectURL, err := c.buildObjectURL(info.ObjectType, info.ObjectName)
 	if err != nil {
 		return nil, err
@@ -637,53 +642,83 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		}
 	}()
 
-	// 5. Syntax check
-	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
-			Message:    fmt.Sprintf("Syntax check failed: %v", err),
-		}, nil
-	}
-
-	if len(syntaxErrors) > 0 {
-		// Convert syntax errors to strings
-		errorMsgs := make([]string, len(syntaxErrors))
-		for i, e := range syntaxErrors {
-			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+	// 5. Syntax check (skip for class includes - will check after update)
+	if !isClassInclude {
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			return &DeployResult{
+				FilePath:   filePath,
+				ObjectURL:  objectURL,
+				ObjectName: info.ObjectName,
+				ObjectType: string(info.ObjectType),
+				Success:    false,
+				Errors:     []string{fmt.Sprintf("syntax check failed: %v", err)},
+				Message:    fmt.Sprintf("Syntax check failed: %v", err),
+			}, nil
 		}
-		return &DeployResult{
-			FilePath:     filePath,
-			ObjectURL:    objectURL,
-			ObjectName:   info.ObjectName,
-			ObjectType:   string(info.ObjectType),
-			Success:      false,
-			SyntaxErrors: errorMsgs,
-			Message:      fmt.Sprintf("Source has %d syntax errors", len(syntaxErrors)),
-		}, nil
+
+		if len(syntaxErrors) > 0 {
+			// Convert syntax errors to strings
+			errorMsgs := make([]string, len(syntaxErrors))
+			for i, e := range syntaxErrors {
+				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+			}
+			return &DeployResult{
+				FilePath:     filePath,
+				ObjectURL:    objectURL,
+				ObjectName:   info.ObjectName,
+				ObjectType:   string(info.ObjectType),
+				Success:      false,
+				SyntaxErrors: errorMsgs,
+				Message:      fmt.Sprintf("Source has %d syntax errors", len(syntaxErrors)),
+			}, nil
+		}
 	}
 
-	// 6. Write source (need source URL, not object URL)
-	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
-	if err != nil {
-		return nil, err
-	}
-	err = c.UpdateSource(ctx, sourceURL, source, lockResult.LockHandle, transport)
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("write source failed: %v", err)},
-			Message:    fmt.Sprintf("Failed to write source: %v", err),
-		}, nil
+	// 6. Write source
+	if isClassInclude {
+		// For class includes, use UpdateClassInclude
+		// First try to update - if fails with 404, create the include first
+		err = c.UpdateClassInclude(ctx, info.ObjectName, info.ClassIncludeType, source, lockResult.LockHandle, transport)
+		if err != nil {
+			// Try to create the include first (for testclasses)
+			if info.ClassIncludeType == ClassIncludeTestClasses {
+				createErr := c.CreateTestInclude(ctx, info.ObjectName, lockResult.LockHandle, transport)
+				if createErr == nil {
+					// Retry update
+					err = c.UpdateClassInclude(ctx, info.ObjectName, info.ClassIncludeType, source, lockResult.LockHandle, transport)
+				}
+			}
+		}
+		if err != nil {
+			return &DeployResult{
+				FilePath:   filePath,
+				ObjectURL:  objectURL,
+				ObjectName: info.ObjectName,
+				ObjectType: fmt.Sprintf("%s.%s", info.ObjectType, info.ClassIncludeType),
+				Success:    false,
+				Errors:     []string{fmt.Sprintf("write class include failed: %v", err)},
+				Message:    fmt.Sprintf("Failed to write class include: %v", err),
+			}, nil
+		}
+	} else {
+		// Regular source update
+		sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
+		if err != nil {
+			return nil, err
+		}
+		err = c.UpdateSource(ctx, sourceURL, source, lockResult.LockHandle, transport)
+		if err != nil {
+			return &DeployResult{
+				FilePath:   filePath,
+				ObjectURL:  objectURL,
+				ObjectName: info.ObjectName,
+				ObjectType: string(info.ObjectType),
+				Success:    false,
+				Errors:     []string{fmt.Sprintf("write source failed: %v", err)},
+				Message:    fmt.Sprintf("Failed to write source: %v", err),
+			}, nil
+		}
 	}
 
 	// 7. Unlock
@@ -715,14 +750,20 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		}, nil
 	}
 
+	// Build result message
+	objTypeStr := string(info.ObjectType)
+	if isClassInclude {
+		objTypeStr = fmt.Sprintf("%s.%s", info.ObjectType, info.ClassIncludeType)
+	}
+
 	return &DeployResult{
 		FilePath:   filePath,
 		ObjectURL:  objectURL,
 		ObjectName: info.ObjectName,
-		ObjectType: string(info.ObjectType),
+		ObjectType: objTypeStr,
 		Success:    true,
 		Created:    false,
-		Message:    fmt.Sprintf("Successfully updated and activated %s %s from %s", info.ObjectType, info.ObjectName, filePath),
+		Message:    fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
 	}, nil
 }
 
@@ -733,14 +774,23 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 // This is the recommended method for deploying ABAP objects from files as it
 // automatically determines whether to create a new object or update an existing one.
 //
+// Supports class includes (.clas.testclasses.abap, .clas.locals_def.abap, etc.)
+// For class includes, the parent class must already exist.
+//
 // Example:
 //   result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
+//   result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.testclasses.abap", "$TMP", "")
 func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
 	// 1. Parse file
 	info, err := ParseABAPFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("parsing file: %w", err)
 	}
+
+	// Check if this is a class include
+	isClassInclude := info.ObjectType == ObjectTypeClass &&
+		info.ClassIncludeType != "" &&
+		info.ClassIncludeType != ClassIncludeMain
 
 	// 2. Check if object exists
 	objectURL, err := c.buildObjectURL(info.ObjectType, info.ObjectName)
@@ -755,11 +805,24 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 	})
 
 	if err != nil {
-		// Object doesn't exist - create it
+		// Object doesn't exist
+		if isClassInclude {
+			// For class includes, the parent class must exist
+			return &DeployResult{
+				FilePath:   filePath,
+				ObjectURL:  objectURL,
+				ObjectName: info.ObjectName,
+				ObjectType: fmt.Sprintf("%s.%s", info.ObjectType, info.ClassIncludeType),
+				Success:    false,
+				Errors:     []string{"parent class does not exist"},
+				Message:    fmt.Sprintf("Cannot deploy class include: parent class %s does not exist. Create the class first.", info.ObjectName),
+			}, nil
+		}
+		// Regular object - create it
 		return c.CreateFromFile(ctx, filePath, packageName, transport)
 	}
 
-	// Object exists - update it
+	// Object exists - update it (handles both regular objects and class includes)
 	return c.UpdateFromFile(ctx, filePath, transport)
 }
 
@@ -993,6 +1056,72 @@ func (c *Client) SaveToFile(ctx context.Context, objType CreatableObjectType, ob
 
 	result.Success = true
 	result.Message = fmt.Sprintf("Saved %s %s to %s (%d lines)", objType, objectName, result.FilePath, result.LineCount)
+	return result, nil
+}
+
+// SaveClassIncludeToFile saves a class include's source code to a local file.
+//
+// Workflow: GetClassInclude → WriteFile
+//
+// The file extension is determined by the include type (abapGit-compatible):
+//   - testclasses  → .clas.testclasses.abap
+//   - definitions  → .clas.locals_def.abap
+//   - implementations → .clas.locals_imp.abap
+//   - macros       → .clas.macros.abap
+//   - main         → .clas.abap
+func (c *Client) SaveClassIncludeToFile(ctx context.Context, className string, includeType ClassIncludeType, outputPath string) (*SaveToFileResult, error) {
+	result := &SaveToFileResult{
+		ObjectName: className,
+		ObjectType: fmt.Sprintf("CLAS.%s", includeType),
+	}
+
+	// 1. Determine file extension based on include type
+	var ext string
+	switch includeType {
+	case ClassIncludeTestClasses:
+		ext = ".clas.testclasses.abap"
+	case ClassIncludeDefinitions:
+		ext = ".clas.locals_def.abap"
+	case ClassIncludeImplementations:
+		ext = ".clas.locals_imp.abap"
+	case ClassIncludeMacros:
+		ext = ".clas.macros.abap"
+	case ClassIncludeMain, "":
+		ext = ".clas.abap"
+	default:
+		ext = ".clas.abap"
+	}
+
+	// 2. Build file path
+	if outputPath == "" {
+		outputPath = "."
+	}
+	if !strings.HasSuffix(outputPath, ext) {
+		// outputPath is a directory
+		className = strings.ToLower(className)
+		result.FilePath = filepath.Join(outputPath, className+ext)
+	} else {
+		result.FilePath = outputPath
+	}
+
+	// 3. Get class include source
+	source, err := c.GetClassInclude(ctx, className, includeType)
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to read class include: %v", err)
+		return result, nil
+	}
+
+	result.LineCount = len(strings.Split(source, "\n"))
+
+	// 4. Write to file
+	err = os.WriteFile(result.FilePath, []byte(source), 0644)
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to write file: %v", err)
+		return result, nil
+	}
+
+	result.Success = true
+	result.Message = fmt.Sprintf("Saved %s %s.%s to %s (%d lines)", "CLAS", className, includeType, result.FilePath, result.LineCount)
 	return result, nil
 }
 

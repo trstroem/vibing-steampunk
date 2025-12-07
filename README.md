@@ -3,6 +3,13 @@
 
 ## What's New
 
+**v2.12.0** - abapGit-Compatible Format & Batch Operations
+- **Class Includes**: Import/export `.clas.testclasses.abap`, `.clas.locals_def.abap`, `.clas.locals_imp.abap`
+- **Batch Import DSL**: `dsl.Import(client).FromDirectory("./src/").RAPOrder().Execute(ctx)`
+- **Batch Export DSL**: `dsl.Export(client).Classes("ZCL_*").ToDirectory("./backup/").Execute(ctx)`
+- **Pipeline Builder**: `dsl.RAPPipeline(client, "./src/", "$PKG", "ZSRV_BINDING")` - full RAP deployment
+- **Priority Control**: `DDLSFirst()`, `RAPOrder()`, `CustomOrder()` for dependency handling
+
 **v2.11.0** - Transport Management & Safety Controls
 - **5 Transport Tools**: ListTransports, GetTransport, CreateTransport, ReleaseTransport, DeleteTransport
 - **Safety Controls**: `--enable-transports`, `--transport-read-only`, `--allowed-transports "A4HK*"`
@@ -198,6 +205,22 @@ objects, _ := dsl.Search(client).
 // Test orchestration
 summary, _ := dsl.Test(client).
     Objects(objects...).Parallel(4).Run(ctx)
+
+// Batch import from directory (abapGit-compatible)
+result, _ := dsl.Import(client).
+    FromDirectory("./src/").
+    ToPackage("$ZRAY").
+    RAPOrder().  // DDLS → BDEF → Classes → SRVD
+    Execute(ctx)
+
+// Export classes with all includes
+result, _ := dsl.Export(client).
+    Classes("ZCL_TRAVEL", "ZCL_BOOKING").
+    ToDirectory("./backup/").
+    Execute(ctx)
+
+// RAP deployment pipeline
+pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 ```
 
 See [docs/DSL.md](docs/DSL.md) for complete documentation.

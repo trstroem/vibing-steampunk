@@ -404,6 +404,143 @@ func (s *StageBuilder) Print(message string) *StageBuilder {
 	return s
 }
 
+// Import adds an import step (import files from directory).
+func (s *StageBuilder) Import(directory, packageName string, saveAs string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "import",
+		Parameters: map[string]interface{}{
+			"directory": directory,
+			"package":   packageName,
+		},
+		SaveAs: saveAs,
+	})
+	return s
+}
+
+// ImportFiles adds a step to import specific files.
+func (s *StageBuilder) ImportFiles(files []string, packageName string, saveAs string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "import_files",
+		Parameters: map[string]interface{}{
+			"files":   files,
+			"package": packageName,
+		},
+		SaveAs: saveAs,
+	})
+	return s
+}
+
+// Create adds a create step for a new object.
+func (s *StageBuilder) Create(objectType, name, packageName, description string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "create",
+		Parameters: map[string]interface{}{
+			"type":        objectType,
+			"name":        name,
+			"package":     packageName,
+			"description": description,
+		},
+	})
+	return s
+}
+
+// WriteSource adds a step to write source code.
+func (s *StageBuilder) WriteSource(objectType, name, sourceVar string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "write_source",
+		Parameters: map[string]interface{}{
+			"type":   objectType,
+			"name":   name,
+			"source": sourceVar,
+		},
+	})
+	return s
+}
+
+// ActivateObject adds a step to activate a specific object.
+func (s *StageBuilder) ActivateObject(objectType, name string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "activate_object",
+		Parameters: map[string]interface{}{
+			"type": objectType,
+			"name": name,
+		},
+	})
+	return s
+}
+
+// Publish adds a step to publish a service binding.
+func (s *StageBuilder) Publish(bindingName, version string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "publish",
+		Parameters: map[string]interface{}{
+			"binding": bindingName,
+			"version": version,
+		},
+	})
+	return s
+}
+
+// Unpublish adds a step to unpublish a service binding.
+func (s *StageBuilder) Unpublish(bindingName, version string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "unpublish",
+		Parameters: map[string]interface{}{
+			"binding": bindingName,
+			"version": version,
+		},
+	})
+	return s
+}
+
+// Query adds a step to run an SQL query.
+func (s *StageBuilder) Query(sql, saveAs string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action:     "query",
+		Parameters: map[string]interface{}{"sql": sql},
+		SaveAs:     saveAs,
+	})
+	return s
+}
+
+// Export adds a step to export objects to files.
+func (s *StageBuilder) Export(objectsVar, outputDir string, saveAs string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "export",
+		Parameters: map[string]interface{}{
+			"objects":   objectsVar,
+			"outputDir": outputDir,
+		},
+		SaveAs: saveAs,
+	})
+	return s
+}
+
+// ExportClasses adds a step to export specific classes.
+func (s *StageBuilder) ExportClasses(classNames []string, outputDir string, saveAs string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "export_classes",
+		Parameters: map[string]interface{}{
+			"classes":   classNames,
+			"outputDir": outputDir,
+		},
+		SaveAs: saveAs,
+	})
+	return s
+}
+
+// SetVariable adds a step to set a variable.
+func (s *StageBuilder) SetVariable(name, value string) *StageBuilder {
+	s.steps = append(s.steps, Step{
+		Action: "set_var",
+		Parameters: map[string]interface{}{
+			"name":  name,
+			"value": value,
+		},
+	})
+	return s
+}
+
 // Then returns to the pipeline builder to add more stages.
 func (s *StageBuilder) Then() *PipelineBuilder {
 	return s.pipeline
@@ -448,6 +585,69 @@ func CIPipeline(client *adt.Client, packagePattern string) *Pipeline {
 			Test("objects", "testResults").
 			FailIfTestsFailed("testResults").
 			Print("All tests passed").
+			Then().
+		Build()
+}
+
+// DeployPipeline creates a deployment pipeline (import → activate → test).
+func DeployPipeline(client *adt.Client, sourceDir, packageName string) *Pipeline {
+	return NewPipeline(client, "deploy").
+		Stage("import").
+			Import(sourceDir, packageName, "importResults").
+			Print("Files imported").
+			Then().
+		Stage("activate").
+			DependsOn("import").
+			Search(packageName+"*", "objects").
+			Activate("objects").
+			Print("Objects activated").
+			Then().
+		Stage("test").
+			DependsOn("activate").
+			Test("objects", "testResults").
+			Print("Tests completed").
+			Then().
+		Build()
+}
+
+// RAPPipeline creates a full RAP service deployment pipeline.
+// Stages: import → activate → publish → verify
+func RAPPipeline(client *adt.Client, sourceDir, packageName, serviceBinding string) *Pipeline {
+	return NewPipeline(client, "rap-deploy").
+		Stage("import").
+			Import(sourceDir, packageName, "importResults").
+			Print("RAP artifacts imported").
+			Then().
+		Stage("activate").
+			DependsOn("import").
+			Search(packageName+"*", "objects").
+			Activate("objects").
+			Print("All objects activated").
+			Then().
+		Stage("publish").
+			DependsOn("activate").
+			Publish(serviceBinding, "0001").
+			Print("Service binding published").
+			Then().
+		Stage("verify").
+			DependsOn("publish").
+			Query("SELECT * FROM "+serviceBinding+" WHERE 1=0", "queryResult").
+			Print("Service verified").
+			Then().
+		Build()
+}
+
+// ExportPipeline creates an export pipeline for backup/git.
+func ExportPipeline(client *adt.Client, packagePattern, outputDir string) *Pipeline {
+	return NewPipeline(client, "export").
+		Stage("discover").
+			Search(packagePattern, "objects").
+			Print("Found objects to export").
+			Then().
+		Stage("export").
+			DependsOn("discover").
+			Export("objects", outputDir, "exportResults").
+			Print("Objects exported").
 			Then().
 		Build()
 }

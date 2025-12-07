@@ -348,10 +348,12 @@ When creating a new report:
 | **Integration Tests** | 34 |
 | **Platforms** | 9 |
 | **Phase** | 4 (Native ADT Features) - In Progress |
-| **Reports** | 22 numbered + 6 reference docs |
+| **Reports** | 23 numbered + 6 reference docs |
 | **Cache Package** | ✅ Complete (in-memory + SQLite) |
 | **Safety System** | ✅ Complete (operation filtering, package restrictions) |
-| **DSL Package** | ✅ Complete (fluent API, YAML workflows, test orchestration) |
+| **DSL Package** | ✅ Complete (fluent API, YAML workflows, test orchestration, batch import/export) |
+| **Batch Import/Export** | ✅ Complete (v2.12 - abapGit-compatible format, priority ordering) |
+| **Pipeline Builder** | ✅ Complete (v2.12 - DeployPipeline, RAPPipeline, ExportPipeline) |
 | **ExecuteABAP** | ✅ Complete (code execution via Unit Test wrapper) |
 | **System Info** | ✅ Complete (GetSystemInfo, GetInstalledComponents) |
 | **Code Analysis** | ✅ Complete (GetCallGraph, GetObjectStructure) |
@@ -364,6 +366,7 @@ When creating a new report:
 | **Transport Mgmt** | ✅ Complete (5 tools with safety controls - v2.11.0) |
 | **UI5/BSP Mgmt** | ✅ Partial (Read ops work; Create needs alternate API) |
 | **Tool Groups** | ✅ Complete (--disabled-groups: 5/U, T, H, D, C) |
+| **Class Includes** | ✅ Complete (v2.12 - testclasses, locals_def, locals_imp, macros) |
 
 ### DSL & Workflow Usage
 
@@ -377,7 +380,7 @@ vsp workflow run examples/workflows/ci-pipeline.yaml --var PACKAGE=\$TMP
 ```
 
 ```go
-// Go fluent API
+// Go fluent API - Search & Test
 objects, _ := dsl.Search(client).
     Query("ZCL_*").
     Classes().
@@ -389,6 +392,22 @@ summary, _ := dsl.Test(client).
     IncludeDangerous().
     Parallel(4).
     Run(ctx)
+
+// Batch Import (abapGit-compatible)
+result, _ := dsl.Import(client).
+    FromDirectory("./src/").
+    ToPackage("$ZRAY").
+    RAPOrder().  // DDLS → BDEF → Classes → SRVD
+    Execute(ctx)
+
+// Batch Export (with all class includes)
+result, _ := dsl.Export(client).
+    Classes("ZCL_TRAVEL").
+    ToDirectory("./backup/").
+    Execute(ctx)
+
+// RAP Deployment Pipeline
+pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 ```
 
 ### Roadmap
