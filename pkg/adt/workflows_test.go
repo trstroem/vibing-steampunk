@@ -489,3 +489,66 @@ func TestExecuteABAPOptions(t *testing.T) {
 		t.Errorf("Expected ProgramPrefix 'ZEXEC_', got %s", opts.ProgramPrefix)
 	}
 }
+
+// Test line ending normalization for EditSource
+func TestNormalizeLineEndings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"CRLF to LF", "line1\r\nline2\r\nline3", "line1\nline2\nline3"},
+		{"Already LF", "line1\nline2\nline3", "line1\nline2\nline3"},
+		{"Mixed", "line1\r\nline2\nline3\r\n", "line1\nline2\nline3\n"},
+		{"No newlines", "single line", "single line"},
+		{"Empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeLineEndings(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeLineEndings(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Test countMatches with CRLF vs LF
+func TestCountMatches_LineEndings(t *testing.T) {
+	// Source with CRLF (like SAP returns)
+	source := "IF a = b.\r\n  WRITE: / 'hello'.\r\nENDIF."
+
+	// Search pattern with LF (like AI sends)
+	pattern := "IF a = b.\n  WRITE: / 'hello'.\nENDIF."
+
+	// Should match despite different line endings
+	count := countMatches(source, pattern, false)
+	if count != 1 {
+		t.Errorf("countMatches with CRLF source and LF pattern = %d, want 1", count)
+	}
+
+	// Case insensitive should also work
+	count = countMatches(source, strings.ToLower(pattern), true)
+	if count != 1 {
+		t.Errorf("countMatches case-insensitive = %d, want 1", count)
+	}
+}
+
+// Test replaceMatches with CRLF vs LF
+func TestReplaceMatches_LineEndings(t *testing.T) {
+	// Source with CRLF
+	source := "line1.\r\nOLD CODE.\r\nline3."
+
+	// Old/new patterns with LF
+	old := "OLD CODE."
+	newStr := "NEW CODE.\nEXTRA LINE."
+
+	// Replace should work and result should have LF normalized
+	result := replaceMatches(source, old, newStr, false, false)
+	expected := "line1.\nNEW CODE.\nEXTRA LINE.\nline3."
+
+	if result != expected {
+		t.Errorf("replaceMatches result = %q, want %q", result, expected)
+	}
+}

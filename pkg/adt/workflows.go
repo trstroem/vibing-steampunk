@@ -1145,8 +1145,19 @@ type EditSourceResult struct {
 	Message       string              `json:"message,omitempty"`
 }
 
+// normalizeLineEndings converts CRLF to LF for consistent matching
+// SAP ADT returns source with \r\n but AI assistants typically send \n
+func normalizeLineEndings(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
 // countMatches counts occurrences of substring in s (case-sensitive or case-insensitive)
+// Line endings are normalized (CRLF → LF) before comparison
 func countMatches(s, substr string, caseInsensitive bool) int {
+	// Normalize line endings - SAP uses CRLF, AI sends LF
+	s = normalizeLineEndings(s)
+	substr = normalizeLineEndings(substr)
+
 	if !caseInsensitive {
 		return strings.Count(s, substr)
 	}
@@ -1167,7 +1178,13 @@ func countMatches(s, substr string, caseInsensitive bool) int {
 }
 
 // replaceMatches replaces occurrences of old with new in s (case-sensitive or case-insensitive)
+// Line endings are normalized (CRLF → LF) for consistent matching
 func replaceMatches(s, old, new string, replaceAll, caseInsensitive bool) string {
+	// Normalize line endings - SAP uses CRLF, AI sends LF
+	s = normalizeLineEndings(s)
+	old = normalizeLineEndings(old)
+	new = normalizeLineEndings(new)
+
 	if !caseInsensitive {
 		if replaceAll {
 			return strings.ReplaceAll(s, old, new)
