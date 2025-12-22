@@ -45,8 +45,12 @@
 ### Phase 4: Advanced Analysis (v2.11-2.13) ✅
 - [x] Transport management (5 tools)
 - [x] UI5/BSP management (7 tools)
-- [x] AMDP debugger (experimental)
-- [x] WebSocket handler (ZADT_VSP)
+- [x] AMDP debugger (experimental - interface issue pending)
+- [x] WebSocket handler (ZADT_VSP v2.1.0)
+  - [x] RFC/FM domain - call function modules via WebSocket
+  - [x] Debug domain - stateful ABAP debugging
+  - [x] AMDP domain - HANA/SQLScript debugging (WIP)
+  - [x] SUBMIT domain - execute any ABAP program via WebSocket
 - [x] Call graph traversal (GetCallersOf, GetCalleesOf)
 - [x] TraceExecution composite RCA tool
 - [x] Static vs actual call graph comparison
@@ -237,6 +241,23 @@ forceReplay("production_dump_001")  -- Inject and debug!
 ---
 
 ## Future: Phase 9+
+
+### WebSocket Enhancements (Ongoing)
+
+**ZADT_VSP APC Handler** provides stateful WebSocket capabilities not available via REST:
+
+#### Completed Domains
+- **RFC Domain**: Call any function module via WebSocket
+- **Debug Domain**: Stateful ABAP debugging with session persistence
+- **AMDP Domain**: HANA/SQLScript debugging (interface issue pending)
+- **Submit Domain**: Execute any ABAP program (SUBMIT)
+
+#### Planned Domains
+- [ ] **abapGit Domain**: Package export/import via chunked transfer
+  - Challenge: Large ZIP files may need splitting for WebSocket
+  - Alternative: Use OData handler for large transfers
+- [ ] **Transport Domain**: Transport operations via WebSocket
+- [ ] **Batch Domain**: Bulk operations with progress tracking
 
 ### Phase 9: AI Integration (2027)
 - [ ] AI-suggested breakpoints

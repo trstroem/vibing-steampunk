@@ -11,6 +11,14 @@
 
 ## What's New
 
+**v2.15.0** - Phase 5 TAS-Style Debugging Complete
+- **Variable History Recording**: Track all variable changes during debug sessions
+- **Extended Breakpoint Types**: Statement, exception, and watchpoint scripting
+- **Force Replay / State Injection**: THE KILLER FEATURE - inject captured state into live debug sessions
+- **WebSocket Debugging**: Full TPDAPI integration via ZADT_VSP WebSocket handler
+- **AMDP Debugging**: Experimental support (session works, breakpoint triggering under investigation)
+- See [Observations Since v2.12.5](reports/2025-12-22-observations-since-v2.12.5.md) for complete changelog
+
 **v2.14.0** - Lua Scripting Integration (Phase 5)
 - **`vsp lua` Command**: Interactive REPL and script execution
 - **40+ Lua Bindings**: All MCP tools accessible from Lua (searchObject, getSource, setBreakpoint, etc.)
@@ -378,12 +386,13 @@ See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) 
 
 | Document | Description |
 |----------|-------------|
-| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (62 tools) |
+| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (94 tools) |
 | [MCP_USAGE.md](MCP_USAGE.md) | AI agent usage guide |
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture |
 | [CLAUDE.md](CLAUDE.md) | AI development guidelines |
 | [embedded/abap/README.md](embedded/abap/README.md) | WebSocket handler deployment |
+| [Observations Since v2.12.5](reports/2025-12-22-observations-since-v2.12.5.md) | Recent changes & research summary |
 
 <details>
 <summary><strong>SQL Query Notes</strong></summary>
@@ -441,7 +450,7 @@ vibing-steampunk/
 <details>
 <summary><strong>Roadmap</strong></summary>
 
-### Completed (v2.10.1)
+### Completed (v2.15.0)
 - [x] DSL & Workflow Engine
 - [x] CDS Dependency Analysis (`GetCDSDependencies`)
 - [x] ATC Code Quality Checks (`RunATCCheck`)
@@ -458,9 +467,13 @@ vibing-steampunk/
 - [x] **UI5/BSP Read** - `UI5ListApps`, `UI5GetApp`, `UI5GetFileContent` (v2.10.1)
 - [x] **Feature Detection** - `GetFeatures` tool + system capability probing (v2.12.4)
 - [x] **WriteSource SRVB** - Create Service Bindings via unified API (v2.12.4)
+- [x] **Call Graph & RCA** - GetCallersOf, GetCalleesOf, TraceExecution (v2.13.0)
+- [x] **Lua Scripting** - REPL, 40+ bindings, debug session management (v2.14.0)
+- [x] **WebSocket Debugging** - ZADT_VSP handler, TPDAPI integration (v2.15.0)
+- [x] **Force Replay** - Variable history, state injection (v2.15.0)
 
 ### Parked (Needs Further Work)
-- [ ] **AMDP Debugger** - API works, needs HTTP session persistence ([Report 019](reports/2025-12-05-019-amdp-session-architecture.md))
+- [ ] **AMDP Debugger** - Experimental: Session works, breakpoint triggering under investigation ([Report](reports/2025-12-22-001-amdp-debugging-investigation.md))
 - [ ] **UI5/BSP Write** - ADT filestore is read-only, needs custom plugin via `/UI5/CL_REPOSITORY_LOAD`
 - [ ] **abapGit Integration** - RAP OData service partially working ([Report 002](reports/2025-12-08-002-abapgit-integration-progress.md))
 
@@ -626,8 +639,8 @@ AI Workflow:
 
 | Feature | Phase | Description |
 |---------|-------|-------------|
-| Variable history recording | 5.2 | Track all variable changes during execution |
-| Force Replay (state injection) | 5.5 | Inject saved state into live debug session |
+| Variable history recording | 5.2 | ✅ Track all variable changes during execution |
+| Force Replay (state injection) | 5.5 | ✅ Inject saved state into live debug session |
 | Test case extraction | 6.1 | Automated input/output extraction from recordings |
 | ABAP test generator | 6.3 | Generate ABAP Unit classes from test cases |
 | Mock framework | 6.4 | ZCL_VSP_MOCK for DB/RFC mocking |

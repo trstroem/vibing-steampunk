@@ -16,10 +16,10 @@ import (
 type Server struct {
 	mcpServer      *server.MCPServer
 	adtClient      *adt.Client
-	amdpSession    *adt.AMDPSessionManager // Persistent AMDP debug session (goroutine + channels)
-	config         *Config                  // Server configuration for session manager creation
-	featureProber  *adt.FeatureProber       // Feature detection system (safety network)
-	featureConfig  adt.FeatureConfig        // Feature configuration
+	amdpWSClient   *adt.AMDPWebSocketClient  // WebSocket-based AMDP client (ZADT_VSP)
+	config         *Config                   // Server configuration for session manager creation
+	featureProber  *adt.FeatureProber        // Feature detection system (safety network)
+	featureConfig  adt.FeatureConfig         // Feature configuration
 }
 
 // Config holds MCP server configuration.
@@ -297,16 +297,14 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		// "UI5CreateApp":      true, // Create new UI5 app
 		// "UI5DeleteApp":      true, // Delete UI5 app
 
-		// AMDP (HANA) Debugger - EXPERIMENTAL, expert mode only
-		// Session management works, but breakpoint triggering needs investigation.
-		// Enable with: --mode expert
-		// "AMDPDebuggerStart":  true,
-		// "AMDPDebuggerResume": true,
-		// "AMDPDebuggerStop":   true,
-		// "AMDPDebuggerStep":   true,
-		// "AMDPGetVariables":   true,
-		// "AMDPSetBreakpoint":  true,
-		// "AMDPGetBreakpoints": true,
+		// AMDP (HANA) Debugger - expert mode only
+		"AMDPDebuggerStart":  true,
+		"AMDPDebuggerResume": true,
+		"AMDPDebuggerStop":   true,
+		"AMDPDebuggerStep":   true,
+		"AMDPGetVariables":   true,
+		"AMDPSetBreakpoint":  true,
+		"AMDPGetBreakpoints": true,
 
 		// CTS/Transport Management (2 read-only in focused mode)
 		// Write operations (Create, Release, Delete) only in expert mode
@@ -4729,38 +4727,42 @@ func (s *Server) handleUI5DeleteApp(ctx context.Context, request mcp.CallToolReq
 // --- AMDP (HANA) Debugger Handlers ---
 
 func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	user, _ := request.Params.Arguments["user"].(string)
-	if user == "" {
-		user = s.config.Username
-	}
-
 	// Check if session already active
-	if s.amdpSession != nil && s.amdpSession.IsRunning() {
+	if s.amdpWSClient != nil && s.amdpWSClient.IsActive() {
 		return newToolResultError("AMDP session already active. Use AMDPDebuggerStop first."), nil
 	}
 
-	// Create new session manager with persistent HTTP client (goroutine + channels)
-	s.amdpSession = adt.NewAMDPSessionManager(
+	// Create WebSocket-based AMDP client (connects to ZADT_VSP)
+	s.amdpWSClient = adt.NewAMDPWebSocketClient(
 		s.config.BaseURL,
 		s.config.Client,
+		s.config.Username,
+		s.config.Password,
 		s.config.InsecureSkipVerify,
 	)
 
-	// Start the session (creates goroutine that maintains HTTP session)
-	objectURI := "" // AMDP sessions don't require object URI at start
-	if err := s.amdpSession.Start(ctx, objectURI, s.config.Username, s.config.Password); err != nil {
-		s.amdpSession = nil
+	// Connect to ZADT_VSP WebSocket
+	if err := s.amdpWSClient.Connect(ctx); err != nil {
+		s.amdpWSClient = nil
+		return newToolResultError(fmt.Sprintf("AMDPDebuggerStart: WebSocket connect failed: %v", err)), nil
+	}
+
+	// Start AMDP debug session
+	cascadeMode := "FULL"
+	if cm, ok := request.Params.Arguments["cascade_mode"].(string); ok && cm != "" {
+		cascadeMode = cm
+	}
+
+	if err := s.amdpWSClient.Start(ctx, cascadeMode); err != nil {
+		s.amdpWSClient.Close()
+		s.amdpWSClient = nil
 		return newToolResultError(fmt.Sprintf("AMDPDebuggerStart failed: %v", err)), nil
 	}
 
-	state := s.amdpSession.State()
-
 	var sb strings.Builder
-	sb.WriteString("AMDP Debug Session Started (Goroutine Active)\n\n")
-	sb.WriteString(fmt.Sprintf("Session ID: %s\n", state.SessionID))
-	sb.WriteString(fmt.Sprintf("Main ID: %s\n", state.MainID))
-	sb.WriteString(fmt.Sprintf("Status: %s\n", state.Status))
-	sb.WriteString("\nSession is maintained via background goroutine with channel communication.")
+	sb.WriteString("AMDP Debug Session Started (WebSocket via ZADT_VSP)\n\n")
+	sb.WriteString(fmt.Sprintf("Cascade Mode: %s\n", cascadeMode))
+	sb.WriteString("\nSession uses WebSocket connection to ZADT_VSP APC handler.")
 	sb.WriteString("\nUse AMDPDebuggerStep, AMDPGetVariables to interact.")
 	sb.WriteString("\nUse AMDPDebuggerStop to terminate the session.")
 
@@ -4768,68 +4770,48 @@ func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallTo
 }
 
 func (s *Server) handleAMDPDebuggerResume(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In the goroutine+channel model, Resume checks the current session status
-	// The session manager goroutine handles the event loop internally
-	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+	// WebSocket-based Resume via ZADT_VSP
+	if s.amdpWSClient == nil || !s.amdpWSClient.IsActive() {
 		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
 	}
 
-	// Get current status via channel
-	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdGetStatus, nil)
+	result, err := s.amdpWSClient.Resume(ctx)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("AMDPDebuggerResume failed: %v", err)), nil
 	}
 
-	state, ok := resp.Data.(*adt.AMDPSessionState)
-	if !ok {
-		return newToolResultError("Invalid response from session manager"), nil
-	}
-
 	var sb strings.Builder
-	sb.WriteString("AMDP Session Status\n\n")
-	sb.WriteString(fmt.Sprintf("Session ID: %s\n", state.SessionID))
-	sb.WriteString(fmt.Sprintf("Main ID: %s\n", state.MainID))
-	sb.WriteString(fmt.Sprintf("Status: %s\n", state.Status))
+	sb.WriteString("AMDP Debugger Resume\n\n")
 
-	// Show last event info
-	if state.LastEventKind != "" {
-		sb.WriteString(fmt.Sprintf("Last Event: %s\n", state.LastEventKind))
-	}
-	if !state.LastEventTime.IsZero() {
-		sb.WriteString(fmt.Sprintf("Event Time: %s\n", state.LastEventTime.Format("15:04:05")))
-	}
-
-	// Show breakpoint info if stopped at breakpoint
-	if state.Status == "breakpoint" {
-		sb.WriteString("\n=== BREAKPOINT HIT ===\n")
-		if state.DebuggeeID != "" {
-			sb.WriteString(fmt.Sprintf("Debuggee ID: %s\n", state.DebuggeeID))
-		}
-		if state.BreakPosition != nil {
-			sb.WriteString(fmt.Sprintf("Position: %s line %d\n", state.BreakPosition.ObjectName, state.BreakPosition.Line))
-		}
-		if len(state.CallStack) > 0 {
-			sb.WriteString("\nCall Stack:\n")
-			for _, frame := range state.CallStack {
-				sb.WriteString(fmt.Sprintf("  [%d] %s at %s:%d\n", frame.Level, frame.Name, frame.ObjectName, frame.Line))
-			}
-		}
-		if len(state.Variables) > 0 {
-			sb.WriteString("\nVariables:\n")
-			for _, v := range state.Variables {
-				if v.Type == "table" {
-					sb.WriteString(fmt.Sprintf("  %s: [TABLE %d rows]\n", v.Name, v.Rows))
-				} else {
-					sb.WriteString(fmt.Sprintf("  %s = %s (%s)\n", v.Name, v.Value, v.Type))
-				}
-			}
-		}
+	if len(result.Events) == 0 {
+		sb.WriteString("Waiting for debuggee... (no events yet)\n")
+		sb.WriteString("Execute AMDP code to trigger breakpoints.\n")
 	} else {
-		if state.CurrentProc != "" {
-			sb.WriteString(fmt.Sprintf("Current Procedure: %s\n", state.CurrentProc))
-		}
-		if state.CurrentLine > 0 {
-			sb.WriteString(fmt.Sprintf("Current Line: %d\n", state.CurrentLine))
+		for i, event := range result.Events {
+			sb.WriteString(fmt.Sprintf("Event %d: %s\n", i+1, event.Kind))
+			if event.ContextID != "" {
+				sb.WriteString(fmt.Sprintf("  Context ID: %s\n", event.ContextID))
+			}
+			if event.Kind == "on_break" {
+				sb.WriteString("\n=== BREAKPOINT HIT ===\n")
+				if event.ABAPPosition != nil {
+					sb.WriteString(fmt.Sprintf("  ABAP Position: %s/%s line %d\n",
+						event.ABAPPosition.Program,
+						event.ABAPPosition.Include,
+						event.ABAPPosition.Line))
+				}
+				if event.NativePosition != nil {
+					sb.WriteString(fmt.Sprintf("  Native Position: %s.%s line %d\n",
+						event.NativePosition.Schema,
+						event.NativePosition.Name,
+						event.NativePosition.Line))
+				}
+				sb.WriteString(fmt.Sprintf("  Variable Count: %d\n", event.VariableCount))
+				sb.WriteString(fmt.Sprintf("  Stack Depth: %d\n", event.StackDepth))
+			}
+			if event.Aborted {
+				sb.WriteString("  Session was aborted\n")
+			}
 		}
 	}
 
@@ -4837,26 +4819,29 @@ func (s *Server) handleAMDPDebuggerResume(ctx context.Context, request mcp.CallT
 }
 
 func (s *Server) handleAMDPDebuggerStop(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In goroutine+channel model, we stop via the session manager
-	if s.amdpSession == nil {
+	// WebSocket-based Stop via ZADT_VSP
+	if s.amdpWSClient == nil {
 		return mcp.NewToolResultText("No AMDP session active."), nil
 	}
 
-	// Send stop command via channel (triggers goroutine cleanup)
-	_, err := s.amdpSession.SendCommand(adt.AMDPCmdStop, nil)
-	if err != nil {
-		// Try force stop anyway
-		s.amdpSession.Stop()
+	// Stop AMDP debug session
+	if err := s.amdpWSClient.Stop(ctx); err != nil {
+		// Close connection anyway
+		s.amdpWSClient.Close()
+		s.amdpWSClient = nil
+		return newToolResultError(fmt.Sprintf("AMDPDebuggerStop failed: %v", err)), nil
 	}
 
-	s.amdpSession = nil
+	// Close WebSocket connection
+	s.amdpWSClient.Close()
+	s.amdpWSClient = nil
 
-	return mcp.NewToolResultText("AMDP debug session stopped. Goroutine terminated."), nil
+	return mcp.NewToolResultText("AMDP debug session stopped. WebSocket connection closed."), nil
 }
 
 func (s *Server) handleAMDPDebuggerStep(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In goroutine+channel model, step via session manager
-	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+	// WebSocket-based Step via ZADT_VSP
+	if s.amdpWSClient == nil || !s.amdpWSClient.IsActive() {
 		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
 	}
 
@@ -4865,55 +4850,40 @@ func (s *Server) handleAMDPDebuggerStep(ctx context.Context, request mcp.CallToo
 		return newToolResultError("step_type is required"), nil
 	}
 
-	// Send step command via channel
-	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdStep, map[string]interface{}{
-		"step_type": stepType,
-	})
-	if err != nil {
+	// Execute step via WebSocket
+	if err := s.amdpWSClient.Step(ctx, stepType); err != nil {
 		return newToolResultError(fmt.Sprintf("AMDPDebuggerStep failed: %v", err)), nil
-	}
-
-	if resp.Error != nil {
-		return newToolResultError(fmt.Sprintf("Step failed: %v", resp.Error)), nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Step executed: %s\n\n", stepType))
-
-	// Format response data
-	if data, ok := resp.Data.(map[string]interface{}); ok {
-		if response, ok := data["response"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Response:\n%s\n", response))
-		}
-	}
+	sb.WriteString("Use AMDPDebuggerResume to check for breakpoint events.\n")
 
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
 func (s *Server) handleAMDPGetVariables(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// In goroutine+channel model, get variables via session manager
-	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+	// WebSocket-based GetVariables via ZADT_VSP
+	if s.amdpWSClient == nil || !s.amdpWSClient.IsActive() {
 		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
 	}
 
-	// Send get variables command via channel
-	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdGetVariables, nil)
+	result, err := s.amdpWSClient.GetVariables(ctx)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("AMDPGetVariables failed: %v", err)), nil
-	}
-
-	if resp.Error != nil {
-		return newToolResultError(fmt.Sprintf("Get variables failed: %v", resp.Error)), nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString("AMDP Variables:\n\n")
 
-	// Format response data
-	if vars, ok := resp.Data.([]map[string]interface{}); ok {
-		for _, v := range vars {
-			if response, ok := v["response"].(string); ok {
-				sb.WriteString(response)
+	if len(result.Variables) == 0 {
+		sb.WriteString("No variables available (session may not be at breakpoint)\n")
+	} else {
+		for _, v := range result.Variables {
+			if v.Type == "table" {
+				sb.WriteString(fmt.Sprintf("  %s: [TABLE %d rows]\n", v.Name, v.Rows))
+			} else {
+				sb.WriteString(fmt.Sprintf("  %s = %s (%s)\n", v.Name, v.Value, v.Type))
 			}
 		}
 	}
@@ -4922,8 +4892,8 @@ func (s *Server) handleAMDPGetVariables(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleAMDPSetBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Check for active session
-	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+	// WebSocket-based SetBreakpoint via ZADT_VSP
+	if s.amdpWSClient == nil || !s.amdpWSClient.IsActive() {
 		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
 	}
 
@@ -4938,60 +4908,37 @@ func (s *Server) handleAMDPSetBreakpoint(ctx context.Context, request mcp.CallTo
 	}
 	line := int(lineFloat)
 
-	// Send set breakpoint command via channel
-	args := map[string]interface{}{
-		"proc_name": procName,
-		"line":      line,
-	}
-	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdSetBreakpoint, args)
-	if err != nil {
+	// Set breakpoint via WebSocket
+	if err := s.amdpWSClient.SetBreakpoint(ctx, procName, line); err != nil {
 		return newToolResultError(fmt.Sprintf("AMDPSetBreakpoint failed: %v", err)), nil
 	}
 
-	if resp.Error != nil {
-		return newToolResultError(fmt.Sprintf("Set breakpoint failed: %v", resp.Error)), nil
-	}
-
-	// Include server response for debugging
-	respBody := ""
-	if resp.Data != nil {
-		if s, ok := resp.Data.(string); ok {
-			respBody = s
-		}
-	}
-
-	result := fmt.Sprintf("AMDP breakpoint set at %s line %d", procName, line)
-	if respBody != "" {
-		result += fmt.Sprintf("\n\nServer response:\n%s", respBody)
-	}
-	return mcp.NewToolResultText(result), nil
+	return mcp.NewToolResultText(fmt.Sprintf("AMDP breakpoint set at %s line %d", procName, line)), nil
 }
 
 func (s *Server) handleAMDPGetBreakpoints(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Check for active session
-	if s.amdpSession == nil || !s.amdpSession.IsRunning() {
+	// WebSocket-based GetBreakpoints via ZADT_VSP
+	if s.amdpWSClient == nil || !s.amdpWSClient.IsActive() {
 		return newToolResultError("No active AMDP session. Use AMDPDebuggerStart first."), nil
 	}
 
-	// Send get breakpoints command via channel
-	resp, err := s.amdpSession.SendCommand(adt.AMDPCmdGetBreakpoints, nil)
+	result, err := s.amdpWSClient.GetBreakpoints(ctx)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("AMDPGetBreakpoints failed: %v", err)), nil
-	}
-
-	if resp.Error != nil {
-		return newToolResultError(fmt.Sprintf("Get breakpoints failed: %v", resp.Error)), nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString("AMDP Breakpoints:\n\n")
 
-	// Format response data
-	if bps, ok := resp.Data.([]map[string]interface{}); ok {
-		for _, bp := range bps {
-			if response, ok := bp["response"].(string); ok {
-				sb.WriteString(response)
+	if len(result.Breakpoints) == 0 {
+		sb.WriteString("No breakpoints set.\n")
+	} else {
+		for i, bp := range result.Breakpoints {
+			enabled := "enabled"
+			if !bp.Enabled {
+				enabled = "disabled"
 			}
+			sb.WriteString(fmt.Sprintf("  %d. %s line %d (%s)\n", i+1, bp.ObjectName, bp.Line, enabled))
 		}
 	}
 

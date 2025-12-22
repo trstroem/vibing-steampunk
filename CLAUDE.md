@@ -170,39 +170,31 @@ case "NewTool":
     return mcp.NewToolResultText(formatResult(result)), nil
 ```
 
-### AMDP Session Manager Pattern (Goroutine + Channels)
+### AMDP WebSocket Client Pattern (via ZADT_VSP)
 
-For operations requiring persistent HTTP sessions (like AMDP debugging):
+For AMDP/HANA debugging, we use WebSocket connection to the ZADT_VSP APC handler:
 
 ```go
-// Session manager maintains HTTP session via goroutine
-type AMDPSessionManager struct {
-    cmdChannel  chan AMDPCommand  // Commands from handlers
-    httpClient  *http.Client      // Holds session cookies
+// WebSocket client connects to ZADT_VSP for stateful debugging
+type AMDPWebSocketClient struct {
+    conn      *websocket.Conn
+    sessionID string
+    isActive  bool
+    Events    chan *AMDPEvent
     // ...
 }
 
-// Handler sends command via channel
+// Handler uses WebSocket client directly
 func (s *Server) handleAMDPDebuggerStep(...) {
-    resp, err := s.amdpSession.SendCommand(adt.AMDPCmdStep, args)
-    // ...
-}
-
-// Background goroutine processes commands
-func (m *AMDPSessionManager) processCommands(ctx context.Context) {
-    for {
-        select {
-        case cmd := <-m.cmdChannel:
-            resp := m.handleCommand(ctx, cmd)
-            cmd.Response <- resp
-        case <-ctx.Done():
-            return
-        }
+    if err := s.amdpWSClient.Step(ctx, stepType); err != nil {
+        return newToolResultError(fmt.Sprintf("AMDPDebuggerStep failed: %v", err)), nil
     }
+    // ...
 }
 ```
 
-See `pkg/adt/amdp_session.go` for full implementation.
+See `pkg/adt/amdp_websocket.go` for Go client implementation.
+See `embedded/abap/zcl_vsp_amdp_service.clas.abap` for ABAP service implementation.
 
 ## Testing
 

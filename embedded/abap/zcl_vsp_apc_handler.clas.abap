@@ -20,7 +20,6 @@ CLASS zcl_vsp_apc_handler DEFINITION
     DATA mo_message_manager TYPE REF TO if_apc_wsp_message_manager.
     DATA mv_session_id TYPE string.
 
-    " Service registry
     CLASS-DATA gt_services TYPE STANDARD TABLE OF REF TO zif_vsp_service WITH KEY table_line.
 
     METHODS parse_message
@@ -53,17 +52,15 @@ ENDCLASS.
 CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
   METHOD class_constructor.
-    " Register available services
     APPEND NEW zcl_vsp_rfc_service( ) TO gt_services.
     APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
+    APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
   ENDMETHOD.
-
 
   METHOD if_apc_wsp_extension~on_start.
     mo_context = i_context.
     mo_message_manager = i_message_manager.
 
-    " Generate session ID
     DATA lv_uuid TYPE sysuuid_c32.
     TRY.
         lv_uuid = cl_system_uuid=>create_uuid_c32_static( ).
@@ -72,10 +69,9 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ENDTRY.
     mv_session_id = lv_uuid.
 
-    " Send welcome message
     DATA(lv_brace_open) = '{'.
     DATA(lv_brace_close) = '}'.
-    DATA(lv_data) = |{ lv_brace_open }"session":"{ mv_session_id }","version":"2.0.0","domains":["rfc","debug"]{ lv_brace_close }|.
+    DATA(lv_data) = |{ lv_brace_open }"session":"{ mv_session_id }","version":"2.1.0","domains":["rfc","debug","amdp"]{ lv_brace_close }|.
 
     send_response( VALUE #(
       id      = 'welcome'
@@ -84,50 +80,43 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ) ).
   ENDMETHOD.
 
-
   METHOD if_apc_wsp_extension~on_message.
-    DATA(lv_text) = i_message->get_text( ).
+    TRY.
+        DATA(lv_text) = i_message->get_text( ).
 
-    " Parse incoming message
-    DATA(ls_message) = parse_message( lv_text ).
+        DATA(ls_message) = parse_message( lv_text ).
 
-    IF ls_message-id IS INITIAL.
-      send_error( iv_id = 'unknown' iv_code = 'PARSE_ERROR' iv_message = 'Invalid message format' ).
-      RETURN.
-    ENDIF.
+        IF ls_message-id IS INITIAL.
+          send_error( iv_id = 'unknown' iv_code = 'PARSE_ERROR' iv_message = 'Invalid message format' ).
+          RETURN.
+        ENDIF.
 
-    " Route and handle
-    DATA(ls_response) = route_message( ls_message ).
-    send_response( ls_response ).
+        DATA(ls_response) = route_message( ls_message ).
+        send_response( ls_response ).
+
+      CATCH cx_apc_error INTO DATA(lx_error) ##NO_HANDLER.
+    ENDTRY.
   ENDMETHOD.
 
-
   METHOD if_apc_wsp_extension~on_close.
-    " Cleanup - notify services of disconnect
     LOOP AT gt_services INTO DATA(lo_service).
       lo_service->on_disconnect( mv_session_id ).
     ENDLOOP.
   ENDMETHOD.
 
-
   METHOD if_apc_wsp_extension~on_error.
     " Log error - could extend with more sophisticated handling
   ENDMETHOD.
 
-
   METHOD parse_message.
     TRY.
-        " Extract fields using regex
-        FIND REGEX '"id"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
-        FIND REGEX '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
-        FIND REGEX '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
+        FIND PCRE '"id"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
+        FIND PCRE '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
+        FIND PCRE '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
+        FIND PCRE '"params"\s*:\s*(\{[^}]*\})' IN iv_text SUBMATCHES rs_message-params.
 
-        " Extract params as raw JSON substring
-        FIND REGEX '"params"\s*:\s*(\{[^}]*\})' IN iv_text SUBMATCHES rs_message-params.
-
-        " Extract timeout if present
         DATA lv_timeout TYPE string.
-        FIND REGEX '"timeout"\s*:\s*(\d+)' IN iv_text SUBMATCHES lv_timeout.
+        FIND PCRE '"timeout"\s*:\s*(\d+)' IN iv_text SUBMATCHES lv_timeout.
         IF sy-subrc = 0.
           rs_message-timeout = lv_timeout.
         ELSE.
@@ -138,7 +127,6 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         CLEAR rs_message.
     ENDTRY.
   ENDMETHOD.
-
 
   METHOD send_response.
     TRY.
@@ -163,11 +151,9 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         lo_message->set_text( lv_json ).
         mo_message_manager->send( lo_message ).
 
-      CATCH cx_apc_error.
-        " Connection may be closed - ignore
+      CATCH cx_apc_error ##NO_HANDLER.
     ENDTRY.
   ENDMETHOD.
-
 
   METHOD send_error.
     DATA(lv_brace_open) = '{'.
@@ -181,9 +167,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ) ).
   ENDMETHOD.
 
-
   METHOD route_message.
-    " Handle built-in actions
     IF is_message-domain = 'system'.
       CASE is_message-action.
         WHEN 'ping'.
@@ -192,7 +176,6 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       ENDCASE.
     ENDIF.
 
-    " Route to domain service
     LOOP AT gt_services INTO DATA(lo_service).
       IF lo_service->get_domain( ) = is_message-domain.
         rs_response = lo_service->handle_message(
@@ -203,7 +186,6 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Unknown domain
     DATA(lv_brace_open) = '{'.
     DATA(lv_brace_close) = '}'.
     rs_response = VALUE #(
@@ -212,7 +194,6 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       error   = |{ lv_brace_open }"code":"UNKNOWN_DOMAIN","message":"Domain '{ is_message-domain }' not found"{ lv_brace_close }|
     ).
   ENDMETHOD.
-
 
   METHOD handle_ping.
     DATA(lv_brace_open) = '{'.
@@ -224,9 +205,9 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     ).
   ENDMETHOD.
 
-
   METHOD escape_json.
     rv_escaped = iv_string.
+    REPLACE ALL OCCURRENCES OF '\' IN rv_escaped WITH '\\'.
     REPLACE ALL OCCURRENCES OF '"' IN rv_escaped WITH '\"'.
     REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_escaped WITH '\n'.
     REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN rv_escaped WITH '\n'.
