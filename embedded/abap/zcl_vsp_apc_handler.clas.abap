@@ -114,7 +114,32 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         FIND PCRE '"id"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
         FIND PCRE '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
         FIND PCRE '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
-        FIND PCRE '"params"\s*:\s*(\{[^}]*\})' IN iv_text SUBMATCHES rs_message-params.
+
+        " Handle nested JSON in params by finding the balanced braces
+        DATA(lv_params_start) = find( val = iv_text sub = '"params"' ).
+        IF lv_params_start >= 0.
+          DATA(lv_brace_start) = find( val = iv_text off = lv_params_start sub = '{' ).
+          IF lv_brace_start >= 0.
+            " Count braces to find the matching closing brace
+            DATA(lv_depth) = 0.
+            DATA(lv_pos) = lv_brace_start.
+            DATA(lv_len) = strlen( iv_text ).
+            WHILE lv_pos < lv_len.
+              DATA(lv_char) = iv_text+lv_pos(1).
+              IF lv_char = '{'.
+                lv_depth = lv_depth + 1.
+              ELSEIF lv_char = '}'.
+                lv_depth = lv_depth - 1.
+                IF lv_depth = 0.
+                  DATA(lv_params_len) = lv_pos - lv_brace_start + 1.
+                  rs_message-params = iv_text+lv_brace_start(lv_params_len).
+                  EXIT.
+                ENDIF.
+              ENDIF.
+              lv_pos = lv_pos + 1.
+            ENDWHILE.
+          ENDIF.
+        ENDIF.
 
         DATA lv_timeout TYPE string.
         FIND PCRE '"timeout"\s*:\s*(\d+)' IN iv_text SUBMATCHES lv_timeout.

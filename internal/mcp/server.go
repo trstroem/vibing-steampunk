@@ -198,6 +198,9 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 			"ListTransports", "GetTransport",
 			"CreateTransport", "ReleaseTransport", "DeleteTransport",
 		},
+		"G": { // Git/abapGit tools (via ZADT_VSP WebSocket)
+			"GitTypes", "GitExport",
+		},
 	}
 	// Map "U" to same tools as "5"
 	toolGroups["U"] = toolGroups["5"]
@@ -310,6 +313,10 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		// Write operations (Create, Release, Delete) only in expert mode
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects
+
+		// Git/abapGit Integration (via ZADT_VSP WebSocket)
+		"GitTypes":  true, // List 158 supported object types
+		"GitExport": true, // Export packages/objects to abapGit ZIP
 	}
 
 	// Helper to check if tool should be registered
@@ -1872,6 +1879,31 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 				mcp.Description("Transport request number"),
 			),
 		), s.handleDeleteTransport)
+	}
+
+	// --- Git/abapGit Integration (via ZADT_VSP WebSocket) ---
+
+	// GitTypes
+	if shouldRegister("GitTypes") {
+		s.mcpServer.AddTool(mcp.NewTool("GitTypes",
+			mcp.WithDescription("Get list of supported abapGit object types. Returns 158 object types that can be exported/imported via abapGit. Requires abapGit to be installed on SAP system."),
+		), s.handleGitTypes)
+	}
+
+	// GitExport
+	if shouldRegister("GitExport") {
+		s.mcpServer.AddTool(mcp.NewTool("GitExport",
+			mcp.WithDescription("Export ABAP objects as abapGit-compatible ZIP. Supports 158 object types. Returns base64-encoded ZIP with files in abapGit format. Use packages OR objects parameter."),
+			mcp.WithString("packages",
+				mcp.Description("Comma-separated package names to export (e.g., '$ZRAY,$TMP'). Supports wildcards."),
+			),
+			mcp.WithString("objects",
+				mcp.Description("JSON array of objects: [{\"type\":\"CLAS\",\"name\":\"ZCL_TEST\"}]"),
+			),
+			mcp.WithBoolean("include_subpackages",
+				mcp.Description("Include subpackages when exporting by package (default: true)"),
+			),
+		), s.handleGitExport)
 	}
 
 }
@@ -5074,4 +5106,111 @@ func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallTool
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Transport %s deleted successfully.", transport)), nil
+}
+
+// --- Git/abapGit Handlers ---
+
+func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket client is connected
+	if s.amdpWSClient == nil {
+		// Create and connect WebSocket client
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL,
+			s.config.Client,
+			s.config.Username,
+			s.config.Password,
+			s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("GitTypes: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	types, err := s.amdpWSClient.GitTypes(ctx)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GitTypes failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Supported abapGit Object Types: %d\n\n", len(types)))
+	for i, t := range types {
+		sb.WriteString(t)
+		if i < len(types)-1 {
+			if (i+1)%10 == 0 {
+				sb.WriteString("\n")
+			} else {
+				sb.WriteString(", ")
+			}
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket client is connected
+	if s.amdpWSClient == nil {
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL,
+			s.config.Client,
+			s.config.Username,
+			s.config.Password,
+			s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("GitExport: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	params := adt.GitExportParams{}
+
+	// Parse packages
+	if pkgStr, ok := request.Params.Arguments["packages"].(string); ok && pkgStr != "" {
+		params.Packages = strings.Split(pkgStr, ",")
+		for i, p := range params.Packages {
+			params.Packages[i] = strings.TrimSpace(p)
+		}
+	}
+
+	// Parse objects
+	if objsStr, ok := request.Params.Arguments["objects"].(string); ok && objsStr != "" {
+		var objs []adt.GitObjectRef
+		if err := json.Unmarshal([]byte(objsStr), &objs); err != nil {
+			return newToolResultError(fmt.Sprintf("Invalid objects JSON: %v", err)), nil
+		}
+		params.Objects = objs
+	}
+
+	// Include subpackages
+	if inclSub, ok := request.Params.Arguments["include_subpackages"].(bool); ok {
+		params.IncludeSubpackages = inclSub
+	} else {
+		params.IncludeSubpackages = true // default
+	}
+
+	if len(params.Packages) == 0 && len(params.Objects) == 0 {
+		return newToolResultError("Either packages or objects parameter is required"), nil
+	}
+
+	result, err := s.amdpWSClient.GitExport(ctx, params)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GitExport failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Git Export Successful\n\n"))
+	sb.WriteString(fmt.Sprintf("Objects: %d\n", result.ObjectCount))
+	sb.WriteString(fmt.Sprintf("Files: %d\n\n", result.FileCount))
+
+	sb.WriteString("Files:\n")
+	for _, f := range result.Files {
+		sb.WriteString(fmt.Sprintf("  %s (%d bytes)\n", f.Path, f.Size))
+	}
+
+	sb.WriteString(fmt.Sprintf("\nZIP Base64 length: %d chars\n", len(result.ZipBase64)))
+	sb.WriteString("Use base64 decode to extract the ZIP file.\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
 }

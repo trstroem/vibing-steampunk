@@ -1,10 +1,10 @@
 # vsp Tool Reference
 
-Complete documentation for all 75 MCP tools available in vsp.
+Complete documentation for all 96 MCP tools available in vsp.
 
 **Mode Legend:**
-- **Focused** - Available in focused mode (31 tools, default)
-- **Expert** - Only available in expert mode (75 tools total)
+- **Focused** - Available in focused mode (48 tools, default)
+- **Expert** - Only available in expert mode (96 tools total)
 
 ---
 
@@ -278,14 +278,46 @@ See [ExecuteABAP Implementation Report](reports/2025-12-05-004-execute-abap-impl
 
 ---
 
+## Git / abapGit Tools (2 tools) - NEW v2.16.0
+
+Exports ABAP objects using abapGit's native serialization. **Requires abapGit installed on SAP system.**
+
+| Tool | Description | Mode |
+|------|-------------|------|
+| `GitTypes` | Get list of 158 supported abapGit object types | Focused |
+| `GitExport` | Export packages/objects as abapGit-compatible ZIP (base64) | Focused |
+
+**GitExport Parameters:**
+- `packages` - Comma-separated package names (e.g., "$ZRAY,$TMP")
+- `objects` - JSON array of objects: `[{"type":"CLAS","name":"ZCL_TEST"}]`
+- `include_subpackages` - Include subpackages (default: true)
+
+**Returns:** Base64-encoded ZIP with abapGit file structure:
+```
+src/
+├── zcl_example.clas.abap      # Class source
+├── zcl_example.clas.xml       # Class metadata
+├── zif_example.intf.abap      # Interface source
+└── ...
+```
+
+**Tool Group:** Git tools can be disabled with `--disabled-groups G`
+
+**SAP Requirements:**
+- `ZCL_ABAPGIT_OBJECTS` - Core serialization class
+- `ZCL_ABAPGIT_FACTORY` - TADIR access factory
+- Install via [abapGit standalone](https://github.com/abapGit/abapGit) or S/4HANA Developer Edition
+
+---
+
 ## Tool Count Summary
 
 | Mode | Tools | Description |
 |------|-------|-------------|
-| **Focused** | 31 | Essential tools for AI-assisted development |
-| **Expert** | 70 | All tools including low-level operations and RAP creation |
+| **Focused** | 48 | Essential tools for AI-assisted development |
+| **Expert** | 96 | All tools including low-level operations and RAP creation |
 
 **Token Savings with Focused Mode:**
-- Tool definitions: 69% reduction (~6,500 → ~2,000 tokens)
-- Typical workflow: 73% reduction
-- Decision clarity: 31 choices instead of 68
+- Tool definitions: 50% reduction (~5,000 → ~2,500 tokens)
+- Typical workflow: 60% reduction
+- Decision clarity: 48 choices instead of 96

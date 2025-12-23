@@ -161,7 +161,9 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
             RESULTS DATA(lt_matches).
 
           LOOP AT lt_matches INTO DATA(ls_match).
-            lv_pkg = lv_pkgs_str+ls_match-submatches[ 1 ]-offset(ls_match-submatches[ 1 ]-length).
+            DATA(lv_off) = ls_match-submatches[ 1 ]-offset.
+            DATA(lv_len) = ls_match-submatches[ 1 ]-length.
+            lv_pkg = lv_pkgs_str+lv_off(lv_len).
             TRANSLATE lv_pkg TO UPPER CASE.
             APPEND lv_pkg TO lt_packages.
           ENDLOOP.
@@ -179,9 +181,13 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
             RESULTS DATA(lt_obj_matches).
 
           LOOP AT lt_obj_matches INTO DATA(ls_obj_match).
+            DATA(lv_type_off) = ls_obj_match-submatches[ 1 ]-offset.
+            DATA(lv_type_len) = ls_obj_match-submatches[ 1 ]-length.
+            DATA(lv_name_off) = ls_obj_match-submatches[ 2 ]-offset.
+            DATA(lv_name_len) = ls_obj_match-submatches[ 2 ]-length.
             DATA(ls_obj) = VALUE ty_object_ref(
-              type = lv_objs_str+ls_obj_match-submatches[ 1 ]-offset(ls_obj_match-submatches[ 1 ]-length)
-              name = lv_objs_str+ls_obj_match-submatches[ 2 ]-offset(ls_obj_match-submatches[ 2 ]-length)
+              type = lv_objs_str+lv_type_off(lv_type_len)
+              name = lv_objs_str+lv_name_off(lv_name_len)
             ).
             APPEND ls_obj TO lt_objects.
           ENDLOOP.
@@ -197,9 +203,9 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
 
         " Or collect from object list
         LOOP AT lt_objects INTO DATA(ls_object).
-          DATA(ls_tadir_entry) = zcl_abapgit_factory=>get_tadir( )->get_single(
+          DATA(ls_tadir_entry) = zcl_abapgit_factory=>get_tadir( )->read_single(
             iv_object   = ls_object-type
-            iv_obj_name = CONV #( ls_object-name )
+            iv_obj_name = ls_object-name
           ).
           IF ls_tadir_entry IS NOT INITIAL.
             APPEND ls_tadir_entry TO lt_tadir.
@@ -268,23 +274,33 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_package_objects.
+    DATA lt_tadir TYPE STANDARD TABLE OF tadir.
+    DATA lt_result TYPE zif_abapgit_definitions=>ty_tadir_tt.
+
     " Get all objects from TADIR for a package
     SELECT * FROM tadir
-      INTO TABLE @rt_tadir
+      INTO TABLE @lt_tadir
       WHERE devclass = @iv_package
         AND delflag  = @abap_false
         AND pgmid    = 'R3TR'.
+
+    " Convert to abapGit format
+    lt_result = CORRESPONDING zif_abapgit_definitions=>ty_tadir_tt( lt_tadir ).
+    APPEND LINES OF lt_result TO rt_tadir.
 
     IF iv_include_subpackages = abap_true.
       " Get subpackages recursively
       TRY.
           DATA(lt_subpackages) = zcl_abapgit_factory=>get_sap_package( iv_package )->list_subpackages( ).
           LOOP AT lt_subpackages INTO DATA(lv_subpkg).
+            CLEAR lt_tadir.
             SELECT * FROM tadir
-              APPENDING TABLE @rt_tadir
+              INTO TABLE @lt_tadir
               WHERE devclass = @lv_subpkg
                 AND delflag  = @abap_false
                 AND pgmid    = 'R3TR'.
+            lt_result = CORRESPONDING zif_abapgit_definitions=>ty_tadir_tt( lt_tadir ).
+            APPEND LINES OF lt_result TO rt_tadir.
           ENDLOOP.
         CATCH zcx_abapgit_exception.
           " Ignore errors for subpackages

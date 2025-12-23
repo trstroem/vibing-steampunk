@@ -4,7 +4,7 @@ This file provides context for AI assistants (Claude, etc.) working on this proj
 
 ## Project Overview
 
-**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 41 essential tools (focused mode, default) or 68 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
+**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 48 essential tools (focused mode, default) or 96 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
 
 ## Quick Reference
 
@@ -352,7 +352,7 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 94 (46 focused, 94 expert) |
+| **Tools** | 96 (48 focused, 96 expert) |
 | **Unit Tests** | 244 |
 | **Integration Tests** | 34 |
 | **Platforms** | 9 |
@@ -378,7 +378,7 @@ When creating a new report:
 | **UI5/BSP Mgmt** | ✅ Partial (Read ops work; Create needs alternate API) |
 | **Tool Groups** | ✅ Complete (--disabled-groups: 5/U, T, H, D, C) |
 | **Class Includes** | ✅ Complete (v2.12 - testclasses, locals_def, locals_imp, macros) |
-| **abapGit Integration** | ⚠️ Parked (RAP OData service built, handler issue - reports/2025-12-08-002) |
+| **abapGit Integration** | ✅ Complete (v2.16.0 - WebSocket, GitTypes, GitExport - 158 object types) |
 
 ### DSL & Workflow Usage
 
@@ -430,3 +430,63 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 - ATC Integration
 - CDS View Support
 - RAP/BDEF Support
+
+---
+
+## Last Session Reference (2025-12-23)
+
+### Objective: abapGit WebSocket Integration - COMPLETED ✅
+
+Implemented abapGit integration via ZADT_VSP WebSocket handler, enabling import/export of 158 abapGit-supported object types.
+
+### What Was Completed
+
+1. ✅ **APC Handler Updated** - Git service registered in `class_constructor`, version 2.2.0
+2. ✅ **Nested JSON Fix** - Fixed `parse_message` to handle nested braces in params
+3. ✅ **Git Service Deployed** - `ZCL_VSP_GIT_SERVICE` with `getTypes` (158 types) and `export` actions
+4. ✅ **Go Client** - `pkg/adt/git.go` with `GitTypes()` and `GitExport()` methods
+5. ✅ **MCP Tools** - `GitTypes` and `GitExport` tools registered (group "G" for disabling)
+6. ✅ **Tests Pass** - All 244+ unit tests passing
+
+### New Files Created
+
+| File | Purpose |
+|------|---------|
+| `pkg/adt/git.go` | Go WebSocket client for Git operations |
+| `reports/2025-12-23-001-heavyweight-operations-architecture.md` | Architecture report for large payloads |
+
+### Updated Files
+
+| File | Changes |
+|------|---------|
+| `embedded/abap/zcl_vsp_apc_handler.clas.abap` | Fixed nested JSON parsing, registered git service |
+| `internal/mcp/server.go` | Added GitTypes/GitExport tools and handlers |
+
+### Technical Notes
+
+- **Nested JSON fix**: The params regex `(\{[^}]*\})` was breaking on nested objects. Replaced with brace-counting algorithm.
+- **Tool group "G"**: Git tools can be disabled via `--disabled-groups G`
+- **abapGit types**: 158 object types supported (CLAS, INTF, PROG, DDLS, BDEF, etc.)
+
+### Usage Examples
+
+```bash
+# Get supported object types
+vsp git-types
+
+# Export a package
+vsp git-export --packages "$ZADT_VSP"
+
+# Export specific objects
+vsp git-export --objects '[{"type":"CLAS","name":"ZCL_TEST"}]'
+```
+
+### What's Left (Future Work)
+
+1. **GitImport** - Import from ZIP (requires `ZCL_ABAPGIT_OBJECTS=>deserialize`)
+2. **Chunked Streaming** - For large package exports (see architecture report)
+3. **Progress Updates** - Real-time feedback during export
+
+### Related Reports
+- `reports/2025-12-23-001-heavyweight-operations-architecture.md` - Chunked streaming design
+- `reports/2025-12-22-003-websocket-abapgit-integration.md` - Original design document

@@ -11,6 +11,15 @@
 
 ## What's New
 
+**v2.16.0** - abapGit WebSocket Integration
+- **GitTypes Tool**: Query 158 supported abapGit object types
+- **GitExport Tool**: Export packages/objects as abapGit-compatible ZIP (base64)
+- **WebSocket Transport**: Via ZADT_VSP handler (domain: "git")
+- **abapGit Serialization**: Uses native `ZCL_ABAPGIT_OBJECTS=>serialize()` for full compatibility
+- **Tool Group "G"**: Disable Git tools with `--disabled-groups G`
+- **Requires**: abapGit installed on SAP system
+- See [abapGit Integration Report](reports/2025-12-23-002-abapgit-websocket-integration-complete.md)
+
 **v2.15.0** - Phase 5 TAS-Style Debugging Complete
 - **Variable History Recording**: Track all variable changes during debug sessions
 - **Extended Breakpoint Types**: Statement, exception, and watchpoint scripting
@@ -84,7 +93,7 @@
 
 ---
 
-**Single binary** with **46 focused tools** (default) or **94 expert tools** for AI-assisted ABAP development.
+**Single binary** with **48 focused tools** (default) or **96 expert tools** for AI-assisted ABAP development.
 
 ## Key Features
 
@@ -196,7 +205,7 @@ Add `.mcp.json` to your project:
 
 | Aspect | Focused (Default) | Expert |
 |--------|-------------------|--------|
-| **Tools** | 46 essential | 94 complete |
+| **Tools** | 48 essential | 96 complete |
 | **Token overhead** | ~2,500 | ~7,500 |
 | **Use case** | Daily development | Edge cases, debugging |
 | **Unified tools** | GetSource, WriteSource | + granular Get*/Write* |
@@ -304,7 +313,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**46 Focused Mode Tools:**
+**48 Focused Mode Tools:**
 - **Search:** SearchObject, GrepObjects, GrepPackages
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
@@ -314,6 +323,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 - **Intelligence:** FindDefinition, FindReferences
 - **System:** GetSystemInfo, GetInstalledComponents, GetCallGraph, GetObjectStructure, **GetFeatures**
 - **Diagnostics:** GetDumps, GetDump, ListTraces, GetTrace, GetSQLTraceState, ListSQLTraces
+- **Git:** GitTypes, GitExport (requires abapGit on SAP)
 
 See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (94 tools).
 
@@ -339,6 +349,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (94 tools
 | ExecuteABAP | - | - | **Y** |
 | RAP OData (DDLS/SRVD/SRVB) | Y | - | **Y** |
 | OData Service Publish | Y | - | **Y** |
+| abapGit Export | Y | - | **Y** (WebSocket) |
 | Debugging | Y | Y | N |
 
 </details>
@@ -443,7 +454,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 77 (50 focused, 77 expert) |
+| **Tools** | 96 (48 focused, 96 expert) |
 | **Unit Tests** | 270+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
@@ -475,7 +486,8 @@ vibing-steampunk/
 ### Parked (Needs Further Work)
 - [ ] **AMDP Debugger** - Experimental: Session works, breakpoint triggering under investigation ([Report](reports/2025-12-22-001-amdp-debugging-investigation.md))
 - [ ] **UI5/BSP Write** - ADT filestore is read-only, needs custom plugin via `/UI5/CL_REPOSITORY_LOAD`
-- [ ] **abapGit Integration** - RAP OData service partially working ([Report 002](reports/2025-12-08-002-abapgit-integration-progress.md))
+- [x] **abapGit Export** - WebSocket integration complete (v2.16.0) - GitTypes, GitExport tools ([Report](reports/2025-12-23-002-abapgit-websocket-integration-complete.md))
+- [ ] **abapGit Import** - Requires `ZCL_ABAPGIT_OBJECTS=>deserialize` with virtual repository
 
 ### Planned
 - [ ] API Release State (ARS) - Contract stability checks
