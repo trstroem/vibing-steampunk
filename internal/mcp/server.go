@@ -18,10 +18,11 @@ import (
 type Server struct {
 	mcpServer      *server.MCPServer
 	adtClient      *adt.Client
-	amdpWSClient   *adt.AMDPWebSocketClient  // WebSocket-based AMDP client (ZADT_VSP)
-	config         *Config                   // Server configuration for session manager creation
-	featureProber  *adt.FeatureProber        // Feature detection system (safety network)
-	featureConfig  adt.FeatureConfig         // Feature configuration
+	amdpWSClient   *adt.AMDPWebSocketClient   // WebSocket-based AMDP client (ZADT_VSP)
+	debugWSClient  *adt.DebugWebSocketClient  // WebSocket-based debug client (ZADT_VSP)
+	config         *Config                    // Server configuration for session manager creation
+	featureProber  *adt.FeatureProber         // Feature detection system (safety network)
+	featureConfig  adt.FeatureConfig          // Feature configuration
 }
 
 // Config holds MCP server configuration.
@@ -270,9 +271,14 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"GetSystemInfo":         true, // System ID, release, kernel
 		"GetInstalledComponents": true, // Installed software components
 
-		// Code analysis (2)
+		// Code analysis (7)
 		"GetCallGraph":       true, // Call hierarchy for methods/functions
 		"GetObjectStructure": true, // Object explorer tree
+		"GetCallersOf":       true, // Simplified up traversal
+		"GetCalleesOf":       true, // Simplified down traversal
+		"AnalyzeCallGraph":   true, // Call graph statistics
+		"CompareCallGraphs":  true, // Compare static vs actual execution
+		"TraceExecution":     true, // Composite RCA tool
 
 		// Runtime errors / Short dumps (2)
 		"GetDumps": true, // List runtime errors
@@ -286,8 +292,12 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"GetSQLTraceState": true, // Check if SQL trace is active
 		"ListSQLTraces":    true, // List SQL trace files
 
-		// External Breakpoints - REMOVED (REST API returns 403 CSRF)
-		// Use WebSocket debug domain (ZADT_VSP) for breakpoint management instead.
+		// External Breakpoints via WebSocket (ZADT_VSP)
+		// REST API returns 403 CSRF, but WebSocket works perfectly
+		"SetBreakpoint":    true, // Set line breakpoint
+		"GetBreakpoints":   true, // List active breakpoints
+		"DeleteBreakpoint": true, // Remove breakpoint
+		"CallRFC":          true, // Call function module via WebSocket (trigger execution)
 
 		// Debugger Session (6)
 		"DebuggerListen":       true, // Wait for debuggee to hit breakpoint
@@ -560,6 +570,12 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		), s.handleGetInstalledComponents)
 	}
 
+	// GetConnectionInfo - Self-inspection tool
+	// Always registered - useful for debugging and introspection
+	s.mcpServer.AddTool(mcp.NewTool("GetConnectionInfo",
+		mcp.WithDescription("Get current MCP connection info: user, URL, client. Useful for debugging and understanding current session context."),
+	), s.handleGetConnectionInfo)
+
 	// GetFeatures - Feature Detection (Safety Network)
 	// Always registered - provides visibility into what's available
 	s.mcpServer.AddTool(mcp.NewTool("GetFeatures",
@@ -783,10 +799,56 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		), s.handleListSQLTraces)
 	}
 
-	// --- Debugger Session ---
-	// NOTE: External breakpoint tools (SetExternalBreakpoint, GetExternalBreakpoints,
-	// DeleteExternalBreakpoint) removed - REST API returns 403 CSRF errors.
-	// Use WebSocket debug domain (ZADT_VSP) for breakpoint management instead.
+	// --- Debugger Session (WebSocket-based via ZADT_VSP) ---
+	// All debugger tools use WebSocket connection to ZADT_VSP for reliable operation.
+	// REST-based breakpoint tools were removed due to CSRF issues.
+
+	// SetBreakpoint - WebSocket-based
+	if shouldRegister("SetBreakpoint") {
+		s.mcpServer.AddTool(mcp.NewTool("SetBreakpoint",
+			mcp.WithDescription("Set a breakpoint at a specific line in ABAP code. Uses WebSocket connection to ZADT_VSP. Requires ZADT_VSP to be deployed on the SAP system."),
+			mcp.WithString("program",
+				mcp.Required(),
+				mcp.Description("Program name (e.g., 'ZADT_DBG_PROG' or 'ZCL_MY_CLASS================CP' for class pool)"),
+			),
+			mcp.WithNumber("line",
+				mcp.Required(),
+				mcp.Description("Line number to set breakpoint on"),
+			),
+		), s.handleSetBreakpoint)
+	}
+
+	// GetBreakpoints - WebSocket-based
+	if shouldRegister("GetBreakpoints") {
+		s.mcpServer.AddTool(mcp.NewTool("GetBreakpoints",
+			mcp.WithDescription("Get all breakpoints registered in the current debug session. Uses WebSocket connection to ZADT_VSP."),
+		), s.handleGetBreakpoints)
+	}
+
+	// DeleteBreakpoint - WebSocket-based
+	if shouldRegister("DeleteBreakpoint") {
+		s.mcpServer.AddTool(mcp.NewTool("DeleteBreakpoint",
+			mcp.WithDescription("Delete a breakpoint by ID. Uses WebSocket connection to ZADT_VSP."),
+			mcp.WithString("breakpoint_id",
+				mcp.Required(),
+				mcp.Description("ID of the breakpoint to delete"),
+			),
+		), s.handleDeleteBreakpoint)
+	}
+
+	// CallRFC - WebSocket-based RFC execution
+	if shouldRegister("CallRFC") {
+		s.mcpServer.AddTool(mcp.NewTool("CallRFC",
+			mcp.WithDescription("Call a function module via WebSocket (ZADT_VSP). Useful for triggering ABAP code execution to hit breakpoints. Parameters are passed as key-value pairs."),
+			mcp.WithString("function",
+				mcp.Required(),
+				mcp.Description("Function module name (e.g., 'RFC_PING', 'BAPI_USER_GET_DETAIL')"),
+			),
+			mcp.WithString("params",
+				mcp.Description("JSON object with function parameters (e.g., '{\"IV_PARAM\":\"value\"}')"),
+			),
+		), s.handleCallRFC)
+	}
 
 	// DebuggerListen
 	if shouldRegister("DebuggerListen") {
@@ -2258,6 +2320,25 @@ func (s *Server) handleGetInstalledComponents(ctx context.Context, request mcp.C
 	}
 
 	result, _ := json.MarshalIndent(components, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+func (s *Server) handleGetConnectionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Return current connection info for introspection
+	info := map[string]interface{}{
+		"user":   s.config.Username,
+		"url":    s.config.BaseURL,
+		"client": s.config.Client,
+		"mode":   s.config.Mode,
+	}
+
+	// Add feature summary
+	info["features"] = s.featureProber.FeatureSummary(ctx)
+
+	// Add debugger status
+	info["debugger_user"] = strings.ToUpper(s.config.Username) // Debugger uses uppercase
+
+	result, _ := json.MarshalIndent(info, "", "  ")
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -4403,13 +4484,144 @@ func (s *Server) handleExecuteABAP(ctx context.Context, request mcp.CallToolRequ
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-// --- Debugger Session Handlers ---
-// NOTE: External breakpoint handlers (handleSetExternalBreakpoint, handleGetExternalBreakpoints,
-// handleDeleteExternalBreakpoint) removed - REST API returns 403 CSRF errors.
-// Use WebSocket debug domain (ZADT_VSP) for breakpoint management instead.
+// --- Debugger Session Handlers (WebSocket-based via ZADT_VSP) ---
+// All breakpoint operations use WebSocket for reliable CSRF-free communication.
+
+// ensureDebugWSClient ensures WebSocket debug client is connected.
+func (s *Server) ensureDebugWSClient(ctx context.Context) error {
+	if s.debugWSClient != nil && s.debugWSClient.IsConnected() {
+		return nil
+	}
+
+	// Create new client
+	s.debugWSClient = adt.NewDebugWebSocketClient(
+		s.config.BaseURL,
+		s.config.Client,
+		s.config.Username,
+		s.config.Password,
+		s.config.InsecureSkipVerify,
+	)
+
+	return s.debugWSClient.Connect(ctx)
+}
+
+func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	program, ok := request.Params.Arguments["program"].(string)
+	if !ok || program == "" {
+		return newToolResultError("program is required"), nil
+	}
+
+	lineFloat, ok := request.Params.Arguments["line"].(float64)
+	if !ok || lineFloat <= 0 {
+		return newToolResultError("line is required and must be positive"), nil
+	}
+	line := int(lineFloat)
+
+	// Ensure WebSocket client is connected
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
+	}
+
+	bpID, err := s.debugWSClient.SetBreakpoint(ctx, program, line)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("SetBreakpoint failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Breakpoint set successfully!\n\nBreakpoint ID: %s\nProgram: %s\nLine: %d\n\nUse DebuggerListen to wait for the breakpoint to be hit.", bpID, program, line)), nil
+}
+
+func (s *Server) handleGetBreakpoints(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
+
+	breakpoints, err := s.debugWSClient.GetBreakpoints(ctx)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetBreakpoints failed: %v", err)), nil
+	}
+
+	if len(breakpoints) == 0 {
+		return mcp.NewToolResultText("No breakpoints are currently set."), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Active Breakpoints (%d):\n\n", len(breakpoints)))
+	for i, bp := range breakpoints {
+		sb.WriteString(fmt.Sprintf("%d. ID: %v\n", i+1, bp["id"]))
+		if kind, ok := bp["kind"]; ok {
+			sb.WriteString(fmt.Sprintf("   Kind: %v\n", kind))
+		}
+		if uri, ok := bp["uri"]; ok {
+			sb.WriteString(fmt.Sprintf("   URI: %v\n", uri))
+		}
+		if line, ok := bp["line"]; ok {
+			sb.WriteString(fmt.Sprintf("   Line: %v\n", line))
+		}
+		sb.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleDeleteBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	bpID, ok := request.Params.Arguments["breakpoint_id"].(string)
+	if !ok || bpID == "" {
+		return newToolResultError("breakpoint_id is required"), nil
+	}
+
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v", err)), nil
+	}
+
+	if err := s.debugWSClient.DeleteBreakpoint(ctx, bpID); err != nil {
+		return newToolResultError(fmt.Sprintf("DeleteBreakpoint failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Breakpoint %s deleted successfully.", bpID)), nil
+}
+
+func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	function, ok := request.Params.Arguments["function"].(string)
+	if !ok || function == "" {
+		return newToolResultError("function is required"), nil
+	}
+
+	// Parse params if provided
+	params := make(map[string]string)
+	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
+		// Parse JSON params
+		var rawParams map[string]interface{}
+		if err := json.Unmarshal([]byte(paramsStr), &rawParams); err != nil {
+			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+		}
+		for k, v := range rawParams {
+			params[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	// Ensure WebSocket client is connected
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
+	}
+
+	result, err := s.debugWSClient.CallRFC(ctx, function, params)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("CallRFC failed: %v", err)), nil
+	}
+
+	// Format result
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(fmt.Sprintf("RFC call completed.\n\nFunction: %s\nSubrc: %d\n\nResult:\n%s", function, result.Subrc, string(resultJSON))), nil
+}
+
+// --- Legacy REST-based Debugger Handlers (fallback) ---
+// These use REST API which works for Listen/Attach/Step but not for breakpoints.
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	user, _ := request.Params.Arguments["user"].(string)
+	if user == "" {
+		user = s.config.Username // Default to connection user
+	}
 	timeout := 60 // default
 	if t, ok := request.Params.Arguments["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
@@ -4461,6 +4673,9 @@ func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolR
 	}
 
 	user, _ := request.Params.Arguments["user"].(string)
+	if user == "" {
+		user = s.config.Username // Default to connection user
+	}
 
 	result, err := s.adtClient.DebuggerAttach(ctx, debuggeeID, user)
 	if err != nil {
