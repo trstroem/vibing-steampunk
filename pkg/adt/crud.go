@@ -282,13 +282,17 @@ func isLockConflictError(err error) bool {
 
 // packageExists checks if a package exists in the system.
 // Returns true if package exists, false otherwise.
+// Uses direct packages API which returns 404 for non-existing packages.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
-	pkg, err := c.GetPackage(ctx, packageName)
-	if err != nil {
-		return false
-	}
-	// GetPackage returns empty URI when package doesn't exist
-	return pkg.URI != ""
+	packageName = strings.ToUpper(packageName)
+	url := fmt.Sprintf("/sap/bc/adt/packages/%s", strings.ToLower(packageName))
+
+	_, err := c.transport.Request(ctx, url, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.packages.v1+xml",
+	})
+
+	return err == nil
 }
 
 // CreateObject creates a new ABAP object.

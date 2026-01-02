@@ -1,0 +1,245 @@
+package adt
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+// RunReportParams contains parameters for report execution.
+type RunReportParams struct {
+	Report     string            `json:"report"`
+	Variant    string            `json:"variant,omitempty"`
+	Params     map[string]string `json:"params,omitempty"`
+	CaptureALV bool              `json:"capture_alv"`
+	MaxRows    int               `json:"max_rows,omitempty"`
+}
+
+// RunReportResult contains report execution results.
+type RunReportResult struct {
+	Status      string      `json:"status"`
+	Report      string      `json:"report"`
+	RuntimeMs   int         `json:"runtime_ms"`
+	ALVCaptured bool        `json:"alv_captured"`
+	Columns     []ALVColumn `json:"columns,omitempty"`
+	Rows        []ALVRow    `json:"rows,omitempty"`
+	TotalRows   int         `json:"total_rows,omitempty"`
+	Truncated   bool        `json:"truncated,omitempty"`
+}
+
+// ALVColumn describes an ALV column.
+type ALVColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// ALVRow is a map of column name to value.
+type ALVRow map[string]string
+
+// TextElements contains program text elements.
+type TextElements struct {
+	Program        string            `json:"program"`
+	Language       string            `json:"language"`
+	SelectionTexts map[string]string `json:"selection_texts"`
+	TextSymbols    map[string]string `json:"text_symbols"`
+}
+
+// SetTextElementsParams contains parameters for setting text elements.
+type SetTextElementsParams struct {
+	Program        string            `json:"program"`
+	Language       string            `json:"language,omitempty"`
+	SelectionTexts map[string]string `json:"selection_texts,omitempty"`
+	TextSymbols    map[string]string `json:"text_symbols,omitempty"`
+}
+
+// SetTextElementsResult contains result of setting text elements.
+type SetTextElementsResult struct {
+	Status            string `json:"status"`
+	Program           string `json:"program"`
+	Language          string `json:"language"`
+	SelectionTextsSet int    `json:"selection_texts_set"`
+	TextSymbolsSet    int    `json:"text_symbols_set"`
+}
+
+// ReportVariant describes a report variant.
+type ReportVariant struct {
+	Name      string `json:"name"`
+	Protected bool   `json:"protected"`
+}
+
+// GetVariantsResult contains list of variants.
+type GetVariantsResult struct {
+	Report   string          `json:"report"`
+	Variants []ReportVariant `json:"variants"`
+}
+
+// RunReport executes an ABAP report via WebSocket (ZADT_VSP report domain).
+func (c *AMDPWebSocketClient) RunReport(ctx context.Context, params RunReportParams) (*RunReportResult, error) {
+	reqParams := map[string]interface{}{
+		"report":      params.Report,
+		"capture_alv": fmt.Sprintf("%t", params.CaptureALV),
+	}
+	if params.Variant != "" {
+		reqParams["variant"] = params.Variant
+	}
+	if params.Params != nil && len(params.Params) > 0 {
+		reqParams["params"] = params.Params
+	}
+	if params.MaxRows > 0 {
+		reqParams["max_rows"] = fmt.Sprintf("%d", params.MaxRows)
+	}
+
+	resp, err := c.sendReportRequest(ctx, "runReport", reqParams)
+	if err != nil {
+		return nil, err
+	}
+
+	var result RunReportResult
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse result: %w", err)
+		}
+	}
+
+	return &result, nil
+}
+
+// GetTextElements retrieves program text elements via WebSocket.
+func (c *AMDPWebSocketClient) GetTextElements(ctx context.Context, program, language string) (*TextElements, error) {
+	params := map[string]interface{}{
+		"program": program,
+	}
+	if language != "" {
+		params["language"] = language
+	}
+
+	resp, err := c.sendReportRequest(ctx, "getTextElements", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result TextElements
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse result: %w", err)
+		}
+	}
+
+	return &result, nil
+}
+
+// SetTextElements updates program text elements via WebSocket.
+func (c *AMDPWebSocketClient) SetTextElements(ctx context.Context, params SetTextElementsParams) (*SetTextElementsResult, error) {
+	reqParams := map[string]interface{}{
+		"program": params.Program,
+	}
+	if params.Language != "" {
+		reqParams["language"] = params.Language
+	}
+	if params.SelectionTexts != nil {
+		reqParams["selection_texts"] = params.SelectionTexts
+	}
+	if params.TextSymbols != nil {
+		reqParams["text_symbols"] = params.TextSymbols
+	}
+
+	resp, err := c.sendReportRequest(ctx, "setTextElements", reqParams)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SetTextElementsResult
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse result: %w", err)
+		}
+	}
+
+	return &result, nil
+}
+
+// GetVariants retrieves available variants for a report via WebSocket.
+func (c *AMDPWebSocketClient) GetVariants(ctx context.Context, report string) (*GetVariantsResult, error) {
+	params := map[string]interface{}{
+		"report": report,
+	}
+
+	resp, err := c.sendReportRequest(ctx, "getVariants", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result GetVariantsResult
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse result: %w", err)
+		}
+	}
+
+	return &result, nil
+}
+
+// sendReportRequest sends a request to the report domain.
+func (c *AMDPWebSocketClient) sendReportRequest(ctx context.Context, action string, params map[string]interface{}) (*WSResponse, error) {
+	c.mu.RLock()
+	if c.conn == nil {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("not connected")
+	}
+	c.mu.RUnlock()
+
+	id := fmt.Sprintf("report_%d", c.msgID.Add(1))
+
+	msg := WSMessage{
+		ID:      id,
+		Domain:  "report",
+		Action:  action,
+		Params:  params,
+		Timeout: 120000, // 2 minute timeout for report execution
+	}
+
+	// Create response channel
+	respCh := make(chan *WSResponse, 1)
+	c.pendingMu.Lock()
+	c.pending[id] = respCh
+	c.pendingMu.Unlock()
+
+	defer func() {
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
+	}()
+
+	// Send message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	c.mu.Lock()
+	err = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err == nil {
+		err = c.conn.WriteMessage(websocket.TextMessage, data)
+	}
+	c.mu.Unlock()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to send message: %w", err)
+	}
+
+	// Wait for response
+	select {
+	case resp := <-respCh:
+		if !resp.Success && resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return resp, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(120 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for report response")
+	}
+}

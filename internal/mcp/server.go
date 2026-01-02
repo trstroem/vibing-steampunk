@@ -204,6 +204,9 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"G": { // Git/abapGit tools (via ZADT_VSP WebSocket)
 			"GitTypes", "GitExport",
 		},
+		"R": { // Report execution tools (via ZADT_VSP WebSocket)
+			"RunReport", "GetVariants", "GetTextElements", "SetTextElements",
+		},
 		"I": { // Install/Setup tools
 			"InstallZADTVSP",
 			"InstallAbapGit",
@@ -335,6 +338,12 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		// Git/abapGit Integration (via ZADT_VSP WebSocket)
 		"GitTypes":  true, // List 158 supported object types
 		"GitExport": true, // Export packages/objects to abapGit ZIP
+
+		// Report Execution (via ZADT_VSP WebSocket)
+		"RunReport":        true, // Execute reports with params/variants, capture ALV
+		"GetVariants":      true, // List report variants
+		"GetTextElements":  true, // Get program text elements
+		"SetTextElements":  true, // Set program text elements
 
 		// Install/Setup tools
 		"InstallZADTVSP":   true, // Deploy ZADT_VSP WebSocket handler to SAP
@@ -1980,6 +1989,76 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 				mcp.Description("Include subpackages when exporting by package (default: true)"),
 			),
 		), s.handleGitExport)
+	}
+
+	// --- Report Execution Tools (via ZADT_VSP WebSocket) ---
+
+	// RunReport
+	if shouldRegister("RunReport") {
+		s.mcpServer.AddTool(mcp.NewTool("RunReport",
+			mcp.WithDescription("Execute an ABAP selection-screen report with parameters or variant. Can capture ALV output as structured data. Requires ZADT_VSP WebSocket handler deployed."),
+			mcp.WithString("report",
+				mcp.Description("Report program name (e.g., 'RFITEMGL', 'ZREPORT_TEST')"),
+				mcp.Required(),
+			),
+			mcp.WithString("variant",
+				mcp.Description("Variant name to use for selection screen (optional)"),
+			),
+			mcp.WithString("params",
+				mcp.Description("JSON object with selection screen parameters (e.g., '{\"P_BUKRS\":\"1000\",\"S_KUNNR\":{\"SIGN\":\"I\",\"OPTION\":\"EQ\",\"LOW\":\"0000001000\"}}'). Keys are parameter names."),
+			),
+			mcp.WithBoolean("capture_alv",
+				mcp.Description("If true, capture ALV grid output as structured data (default: false)"),
+			),
+			mcp.WithNumber("max_rows",
+				mcp.Description("Maximum ALV rows to return when capturing (default: 1000)"),
+			),
+		), s.handleRunReport)
+	}
+
+	// GetVariants
+	if shouldRegister("GetVariants") {
+		s.mcpServer.AddTool(mcp.NewTool("GetVariants",
+			mcp.WithDescription("Get list of available variants for a report program. Returns variant names and whether they are protected."),
+			mcp.WithString("report",
+				mcp.Description("Report program name"),
+				mcp.Required(),
+			),
+		), s.handleGetVariants)
+	}
+
+	// GetTextElements
+	if shouldRegister("GetTextElements") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTextElements",
+			mcp.WithDescription("Get program text elements (selection texts and text symbols). Selection texts describe parameters (P_BUKRS='Company Code'), text symbols are TEXT-001 etc."),
+			mcp.WithString("program",
+				mcp.Description("Program name"),
+				mcp.Required(),
+			),
+			mcp.WithString("language",
+				mcp.Description("Language key (e.g., 'E' for English, 'D' for German). Default: system language."),
+			),
+		), s.handleGetTextElements)
+	}
+
+	// SetTextElements
+	if shouldRegister("SetTextElements") {
+		s.mcpServer.AddTool(mcp.NewTool("SetTextElements",
+			mcp.WithDescription("Set program text elements (selection texts and text symbols). Use for adding descriptions to selection screen parameters and text symbols."),
+			mcp.WithString("program",
+				mcp.Description("Program name"),
+				mcp.Required(),
+			),
+			mcp.WithString("language",
+				mcp.Description("Language key (e.g., 'E' for English, 'D' for German). Default: system language."),
+			),
+			mcp.WithString("selection_texts",
+				mcp.Description("JSON object of selection texts (e.g., '{\"P_BUKRS\":\"Company Code\",\"S_KUNNR\":\"Customer Range\"}')"),
+			),
+			mcp.WithString("text_symbols",
+				mcp.Description("JSON object of text symbols (e.g., '{\"001\":\"Header Text\",\"002\":\"Footer\"}')"),
+			),
+		), s.handleSetTextElements)
 	}
 
 	// --- Install/Setup Tools ---
@@ -5494,6 +5573,235 @@ func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolReques
 
 	sb.WriteString(fmt.Sprintf("\nZIP Base64 length: %d chars\n", len(result.ZipBase64)))
 	sb.WriteString("Use base64 decode to extract the ZIP file.\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- Report Execution Handlers ---
+
+func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket connection
+	if s.amdpWSClient == nil {
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("RunReport: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	// Parse parameters
+	report, _ := request.Params.Arguments["report"].(string)
+	if report == "" {
+		return newToolResultError("report parameter is required"), nil
+	}
+
+	params := adt.RunReportParams{
+		Report: report,
+	}
+
+	if variant, ok := request.Params.Arguments["variant"].(string); ok {
+		params.Variant = variant
+	}
+
+	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
+		var p map[string]string
+		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
+			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+		}
+		params.Params = p
+	}
+
+	if captureALV, ok := request.Params.Arguments["capture_alv"].(bool); ok {
+		params.CaptureALV = captureALV
+	}
+
+	if maxRows, ok := request.Params.Arguments["max_rows"].(float64); ok {
+		params.MaxRows = int(maxRows)
+	}
+
+	result, err := s.amdpWSClient.RunReport(ctx, params)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("RunReport failed: %v", err)), nil
+	}
+
+	// Format output
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Report: %s\n", result.Report))
+	sb.WriteString(fmt.Sprintf("Status: %s\n", result.Status))
+	sb.WriteString(fmt.Sprintf("Runtime: %dms\n\n", result.RuntimeMs))
+
+	if result.ALVCaptured {
+		sb.WriteString(fmt.Sprintf("ALV Data Captured: %d rows", result.TotalRows))
+		if result.Truncated {
+			sb.WriteString(" (truncated)")
+		}
+		sb.WriteString("\n\n")
+
+		// Show columns
+		sb.WriteString("Columns:\n")
+		for _, col := range result.Columns {
+			sb.WriteString(fmt.Sprintf("  %s (%s)\n", col.Name, col.Type))
+		}
+		sb.WriteString("\n")
+
+		// Show data as JSON
+		if len(result.Rows) > 0 {
+			rowsJSON, _ := json.MarshalIndent(result.Rows, "", "  ")
+			sb.WriteString("Data:\n")
+			sb.Write(rowsJSON)
+			sb.WriteString("\n")
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetVariants(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket connection
+	if s.amdpWSClient == nil {
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("GetVariants: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	report, _ := request.Params.Arguments["report"].(string)
+	if report == "" {
+		return newToolResultError("report parameter is required"), nil
+	}
+
+	result, err := s.amdpWSClient.GetVariants(ctx, report)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetVariants failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Variants for %s:\n\n", result.Report))
+
+	if len(result.Variants) == 0 {
+		sb.WriteString("No variants found.\n")
+	} else {
+		for _, v := range result.Variants {
+			if v.Protected {
+				sb.WriteString(fmt.Sprintf("  %s (protected)\n", v.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("  %s\n", v.Name))
+			}
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket connection
+	if s.amdpWSClient == nil {
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("GetTextElements: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	program, _ := request.Params.Arguments["program"].(string)
+	if program == "" {
+		return newToolResultError("program parameter is required"), nil
+	}
+
+	language, _ := request.Params.Arguments["language"].(string)
+
+	result, err := s.amdpWSClient.GetTextElements(ctx, program, language)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("GetTextElements failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Text Elements for %s (Language: %s)\n\n", result.Program, result.Language))
+
+	sb.WriteString("Selection Texts:\n")
+	if len(result.SelectionTexts) == 0 {
+		sb.WriteString("  (none)\n")
+	} else {
+		for key, text := range result.SelectionTexts {
+			sb.WriteString(fmt.Sprintf("  %s: %s\n", key, text))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("Text Symbols:\n")
+	if len(result.TextSymbols) == 0 {
+		sb.WriteString("  (none)\n")
+	} else {
+		for key, text := range result.TextSymbols {
+			sb.WriteString(fmt.Sprintf("  TEXT-%s: %s\n", key, text))
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Ensure WebSocket connection
+	if s.amdpWSClient == nil {
+		s.amdpWSClient = adt.NewAMDPWebSocketClient(
+			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
+		)
+		if err := s.amdpWSClient.Connect(ctx); err != nil {
+			s.amdpWSClient = nil
+			return newToolResultError(fmt.Sprintf("SetTextElements: WebSocket connect failed: %v", err)), nil
+		}
+	}
+
+	program, _ := request.Params.Arguments["program"].(string)
+	if program == "" {
+		return newToolResultError("program parameter is required"), nil
+	}
+
+	params := adt.SetTextElementsParams{
+		Program: program,
+	}
+
+	if language, ok := request.Params.Arguments["language"].(string); ok {
+		params.Language = language
+	}
+
+	if selTextsStr, ok := request.Params.Arguments["selection_texts"].(string); ok && selTextsStr != "" {
+		var selTexts map[string]string
+		if err := json.Unmarshal([]byte(selTextsStr), &selTexts); err != nil {
+			return newToolResultError(fmt.Sprintf("Invalid selection_texts JSON: %v", err)), nil
+		}
+		params.SelectionTexts = selTexts
+	}
+
+	if textSymsStr, ok := request.Params.Arguments["text_symbols"].(string); ok && textSymsStr != "" {
+		var textSyms map[string]string
+		if err := json.Unmarshal([]byte(textSymsStr), &textSyms); err != nil {
+			return newToolResultError(fmt.Sprintf("Invalid text_symbols JSON: %v", err)), nil
+		}
+		params.TextSymbols = textSyms
+	}
+
+	if params.SelectionTexts == nil && params.TextSymbols == nil {
+		return newToolResultError("At least one of selection_texts or text_symbols is required"), nil
+	}
+
+	result, err := s.amdpWSClient.SetTextElements(ctx, params)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("SetTextElements failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Text Elements Updated for %s (Language: %s)\n\n", result.Program, result.Language))
+	sb.WriteString(fmt.Sprintf("Status: %s\n", result.Status))
+	sb.WriteString(fmt.Sprintf("Selection Texts Set: %d\n", result.SelectionTextsSet))
+	sb.WriteString(fmt.Sprintf("Text Symbols Set: %d\n", result.TextSymbolsSet))
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

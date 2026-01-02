@@ -56,6 +56,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
     APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
     APPEND NEW zcl_vsp_git_service( ) TO gt_services.
+    APPEND NEW zcl_vsp_report_service( ) TO gt_services.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_start.
@@ -72,7 +73,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
     DATA(lv_brace_open) = '{'.
     DATA(lv_brace_close) = '}'.
-    DATA(lv_data) = |{ lv_brace_open }"session":"{ mv_session_id }","version":"2.2.0","domains":["rfc","debug","amdp","git"]{ lv_brace_close }|.
+    DATA(lv_data) = |{ lv_brace_open }"session":"{ mv_session_id }","version":"2.3.0","domains":["rfc","debug","amdp","git","report"]{ lv_brace_close }|.
 
     send_response( VALUE #(
       id      = 'welcome'
