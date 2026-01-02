@@ -11,6 +11,22 @@
 
 ## What's New
 
+**v2.18.0** - Report Execution Tools
+- **RunReport**: Execute selection-screen reports with params/variants, capture ALV output
+- **GetVariants**: List available variants for a report
+- **GetTextElements**: Read selection texts and text symbols
+- **SetTextElements**: Update selection texts and text symbols programmatically
+- **Tool Group "R"**: Disable report tools with `--disabled-groups R`
+- **ZADT_VSP v2.3.0**: New "report" domain for WebSocket-based report execution
+- See [Report Design](reports/2026-01-02-002-run-report-text-elements-design.md)
+
+**v2.17.0** - Install Tools & One-Command Deployment
+- **InstallZADTVSP**: Deploy WebSocket handler to SAP in one command
+- **InstallAbapGit**: Deploy abapGit standalone or dev edition
+- **ListDependencies**: Show available installable packages
+- **Upsert Logic**: Proper CREATE vs UPDATE detection for all objects
+- Embedded ABAP source in binary - no external files needed
+
 **v2.16.0** - abapGit WebSocket Integration
 - **GitTypes Tool**: Query 158 supported abapGit object types
 - **GitExport Tool**: Export packages/objects as abapGit-compatible ZIP (base64)
@@ -93,7 +109,7 @@
 
 ---
 
-**Single binary** with **48 focused tools** (default) or **96 expert tools** for AI-assisted ABAP development.
+**Single binary** with **52 focused tools** (default) or **99 expert tools** for AI-assisted ABAP development.
 
 ## Key Features
 
@@ -205,8 +221,8 @@ Add `.mcp.json` to your project:
 
 | Aspect | Focused (Default) | Expert |
 |--------|-------------------|--------|
-| **Tools** | 48 essential | 96 complete |
-| **Token overhead** | ~2,500 | ~7,500 |
+| **Tools** | 52 essential | 99 complete |
+| **Token overhead** | ~2,800 | ~8,000 |
 | **Use case** | Daily development | Edge cases, debugging |
 | **Unified tools** | GetSource, WriteSource | + granular Get*/Write* |
 
@@ -313,7 +329,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**48 Focused Mode Tools:**
+**52 Focused Mode Tools:**
 - **Search:** SearchObject, GrepObjects, GrepPackages
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
@@ -321,11 +337,13 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 - **Write:** WriteSource, EditSource, ImportFromFile, ExportToFile
 - **Dev:** SyntaxCheck, RunUnitTests, RunATCCheck, LockObject, UnlockObject
 - **Intelligence:** FindDefinition, FindReferences
-- **System:** GetSystemInfo, GetInstalledComponents, GetCallGraph, GetObjectStructure, **GetFeatures**
+- **System:** GetSystemInfo, GetInstalledComponents, GetCallGraph, GetObjectStructure, GetFeatures
 - **Diagnostics:** GetDumps, GetDump, ListTraces, GetTrace, GetSQLTraceState, ListSQLTraces
 - **Git:** GitTypes, GitExport (requires abapGit on SAP)
+- **Reports:** RunReport, GetVariants, GetTextElements, SetTextElements
+- **Install:** InstallZADTVSP, InstallAbapGit, ListDependencies
 
-See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (94 tools).
+See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (99 tools).
 
 <details>
 <summary><strong>Capability Matrix</strong></summary>
@@ -455,7 +473,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 96 (48 focused, 96 expert) |
+| **Tools** | 99 (52 focused, 99 expert) |
 | **Unit Tests** | 270+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
