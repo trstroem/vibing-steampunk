@@ -13,12 +13,13 @@
 |------|---------|--------|--------|--------|-------|
 | 1 | `vsp debug` CLI | 2h | High | **Done** | Interactive CLI debugger ([commit f1358e9](https://github.com/oisee/vibing-steampunk/commit/f1358e9)) |
 | 2 | RunReport via FM | 2h | Medium | Planned | Create ZADT_RUN_REPORT FM to avoid APC blocking |
-| 3 | GetMessages tool | 1h | Medium | Planned | Read message class texts (SE91/MSAG) |
-| 4 | CompareSource tool | 2h | Medium | Planned | Diff two versions/objects |
-| 5 | CloneObject tool | 2h | Medium | Planned | Copy object to new name (useful for experiments) |
-| 6 | Heading texts in SetTextElements | 1h | Low | Planned | Add list/column headers support |
-| 7 | Tool aliases | 1h | Low | Planned | Short names: `gs` → GetSource, `ws` → WriteSource |
-| 8 | GetClassInfo tool | 1h | Low | Planned | Quick class metadata without full source |
+| 3 | GetMessages tool | 1h | Medium | **Done** | Read message class texts (SE91/MSAG) - v2.19 |
+| 4 | CompareSource tool | 2h | Medium | **Done** | Unified diff for any two objects - v2.19 |
+| 5 | CloneObject tool | 2h | Medium | **Done** | Copy PROG/CLAS/INTF to new name - v2.19 |
+| 6 | CreateTable tool | 2h | Medium | **Done** | Create DDIC tables from JSON - v2.19 |
+| 7 | GetClassInfo tool | 1h | Low | **Done** | Quick class metadata via CAI - v2.19 |
+| 8 | Heading texts in SetTextElements | 1h | Low | Planned | Add list/column headers support |
+| 9 | Tool aliases | 1h | Low | Planned | Short names: `gs` → GetSource, `ws` → WriteSource |
 
 ## Mid Wins (1-3 days each)
 
@@ -68,9 +69,10 @@
 
 ---
 
-## Completed Features (v2.18.0)
+## Completed Features (v2.19.0)
 
 For reference, recently completed:
+- **v2.19.0**: CreateTable, GetMessages, CompareSource, CloneObject, GetClassInfo, GetSystemInfo fix
 - Report Execution: RunReport, GetVariants, GetTextElements, SetTextElements
 - abapGit Export: GitTypes, GitExport (158 object types)
 - Install Tools: InstallZADTVSP, InstallAbapGit, ListDependencies
