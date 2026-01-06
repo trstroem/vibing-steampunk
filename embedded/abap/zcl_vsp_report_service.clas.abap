@@ -321,21 +321,6 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       lv_first = abap_false.
     ENDLOOP.
 
-    " Add heading texts (list headings, column headings)
-    lv_json = |{ lv_json }{ lv_c },"heading_texts":{ lv_o }|.
-
-    lv_first = abap_true.
-    LOOP AT lt_textpool INTO ls_text WHERE id = 'H'.
-      IF lv_first = abap_false.
-        lv_json = |{ lv_json },|.
-      ENDIF.
-      lv_key = ls_text-key.
-      CONDENSE lv_key.
-      lv_entry_str = ls_text-entry.
-      lv_json = |{ lv_json }"{ lv_key }":"{ escape_json( lv_entry_str ) }"|.
-      lv_first = abap_false.
-    ENDLOOP.
-
     lv_json = |{ lv_json }{ lv_c }{ lv_c }|.
     rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
@@ -348,7 +333,6 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
     DATA(lv_language) = extract_param( iv_params = is_message-params iv_name = 'language' ).
     DATA(lv_sel_json) = extract_param_object( iv_params = is_message-params iv_name = 'selection_texts' ).
     DATA(lv_sym_json) = extract_param_object( iv_params = is_message-params iv_name = 'text_symbols' ).
-    DATA(lv_head_json) = extract_param_object( iv_params = is_message-params iv_name = 'heading_texts' ).
 
     IF lv_prog_str IS INITIAL.
       rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter program is required' ).
@@ -369,7 +353,6 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
 
     DATA lv_sel_count TYPE i.
     DATA lv_sym_count TYPE i.
-    DATA lv_head_count TYPE i.
 
     IF lv_sel_json IS NOT INITIAL.
       DATA(lv_work) = lv_sel_json.
@@ -438,45 +421,13 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       ENDWHILE.
     ENDIF.
 
-    " Process heading texts (list/column headings - ID = 'H')
-    IF lv_head_json IS NOT INITIAL.
-      lv_work = lv_head_json.
-      WHILE lv_work CS '"'.
-        CLEAR: lv_key, lv_val.
-        FIND PCRE '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
-        IF sy-subrc = 0.
-          REPLACE ALL OCCURRENCES OF '\"' IN lv_val WITH '"'.
-          REPLACE ALL OCCURRENCES OF '\\' IN lv_val WITH '\'.
-
-          lv_textkey = lv_key.
-          READ TABLE lt_textpool ASSIGNING <fs> WITH KEY id = 'H' key = lv_textkey.
-          IF sy-subrc = 0.
-            <fs>-entry = lv_val.
-          ELSE.
-            APPEND VALUE textpool( id = 'H' key = lv_textkey entry = lv_val ) TO lt_textpool.
-          ENDIF.
-          lv_head_count = lv_head_count + 1.
-
-          FIND FIRST OCCURRENCE OF |"{ lv_key }"| IN lv_work MATCH OFFSET lv_off MATCH LENGTH lv_len.
-          IF sy-subrc = 0 AND strlen( lv_work ) > lv_off + lv_len.
-            lv_work = lv_work+lv_off.
-            lv_work = lv_work+lv_len.
-          ELSE.
-            EXIT.
-          ENDIF.
-        ELSE.
-          EXIT.
-        ENDIF.
-      ENDWHILE.
-    ENDIF.
-
     INSERT TEXTPOOL lv_program FROM lt_textpool LANGUAGE lv_lang.
 
     DATA(lv_o) = '{'.
     DATA(lv_c) = '}'.
     DATA(lv_status) = COND string( WHEN sy-subrc = 0 THEN 'success' ELSE 'error' ).
     DATA lv_json TYPE string.
-    lv_json = |{ lv_o }"status":"{ lv_status }","program":"{ lv_program }","language":"{ lv_lang }","selection_texts_set":{ lv_sel_count },"text_symbols_set":{ lv_sym_count },"heading_texts_set":{ lv_head_count }{ lv_c }|.
+    lv_json = |{ lv_o }"status":"{ lv_status }","program":"{ lv_program }","language":"{ lv_lang }","selection_texts_set":{ lv_sel_count },"text_symbols_set":{ lv_sym_count }{ lv_c }|.
 
     rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.

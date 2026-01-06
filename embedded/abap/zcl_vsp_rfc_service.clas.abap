@@ -40,6 +40,10 @@ CLASS zcl_vsp_rfc_service DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
+    METHODS handle_run_report
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
     METHODS get_func_interface
       IMPORTING iv_function       TYPE rs38l_fnam
       EXPORTING et_import         TYPE tt_param_info
@@ -92,6 +96,8 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
         rs_response = handle_ping( is_message ).
       WHEN 'moveToPackage'.
         rs_response = handle_move_to_package( is_message ).
+      WHEN 'runReport'.
+        rs_response = handle_run_report( is_message ).
       WHEN OTHERS.
         rs_response = build_error(
           iv_id      = is_message-id
@@ -583,6 +589,118 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       success = abap_false
       error   = |{ lv_o }"code":"{ iv_code }","message":"{ escape_json( iv_message ) }"{ lv_c }|
     ).
+  ENDMETHOD.
+
+  METHOD handle_run_report.
+    " Run a report via XBP (eXternal Batch Processing) BAPIs
+    " These are RFC-enabled and don't trigger APC_ILLEGAL_STATEMENT
+    DATA: lv_report    TYPE progname,
+          lv_variant   TYPE raldb_vari,
+          lv_jobname   TYPE btcjob,
+          lv_jobcount  TYPE btcjobcnt,
+          lv_extuser   TYPE bapixmlogn,
+          lt_return    TYPE TABLE OF bapiret2.
+
+    DATA(lv_report_str) = extract_param( iv_params = is_message-params iv_name = 'report' ).
+    DATA(lv_variant_str) = extract_param( iv_params = is_message-params iv_name = 'variant' ).
+
+    IF lv_report_str IS INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
+      RETURN.
+    ENDIF.
+
+    TRANSLATE lv_report_str TO UPPER CASE.
+    lv_report = lv_report_str.
+
+    IF lv_variant_str IS NOT INITIAL.
+      TRANSLATE lv_variant_str TO UPPER CASE.
+      lv_variant = lv_variant_str.
+    ENDIF.
+
+    " Verify report exists
+    SELECT SINGLE name FROM trdir INTO @DATA(lv_exists) WHERE name = @lv_report.
+    IF sy-subrc <> 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'REPORT_NOT_FOUND' iv_message = |Report { lv_report } not found| ).
+      RETURN.
+    ENDIF.
+
+    " Generate unique job name
+    lv_jobname = |VSP{ sy-uzeit }|.
+    lv_extuser-username = sy-uname.
+
+    " Open job via XBP BAPI
+    CALL FUNCTION 'BAPI_XBP_JOB_OPEN'
+      EXPORTING
+        jobname          = lv_jobname
+        external_user_name = lv_extuser
+      IMPORTING
+        jobcount         = lv_jobcount
+      TABLES
+        return           = lt_return.
+
+    READ TABLE lt_return INTO DATA(ls_ret) WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'JOB_OPEN_ERROR' iv_message = ls_ret-message ).
+      RETURN.
+    ENDIF.
+
+    " Add ABAP step
+    CLEAR lt_return.
+    CALL FUNCTION 'BAPI_XBP_JOB_ADD_ABAP_STEP'
+      EXPORTING
+        jobname          = lv_jobname
+        jobcount         = lv_jobcount
+        external_user_name = lv_extuser
+        abap_program_name = lv_report
+        abap_variant_name = lv_variant
+      TABLES
+        return           = lt_return.
+
+    READ TABLE lt_return INTO ls_ret WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'JOB_STEP_ERROR' iv_message = ls_ret-message ).
+      RETURN.
+    ENDIF.
+
+    " Close and start job immediately
+    CLEAR lt_return.
+    CALL FUNCTION 'BAPI_XBP_JOB_CLOSE'
+      EXPORTING
+        jobname          = lv_jobname
+        jobcount         = lv_jobcount
+        external_user_name = lv_extuser
+      TABLES
+        return           = lt_return.
+
+    READ TABLE lt_return INTO ls_ret WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'JOB_CLOSE_ERROR' iv_message = ls_ret-message ).
+      RETURN.
+    ENDIF.
+
+    " Start job immediately
+    CLEAR lt_return.
+    CALL FUNCTION 'BAPI_XBP_JOB_START_IMMEDIATELY'
+      EXPORTING
+        jobname          = lv_jobname
+        jobcount         = lv_jobcount
+        external_user_name = lv_extuser
+      TABLES
+        return           = lt_return.
+
+    READ TABLE lt_return INTO ls_ret WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'JOB_START_ERROR' iv_message = ls_ret-message ).
+      RETURN.
+    ENDIF.
+
+    " Success response
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"status":"scheduled","report":"{ lv_report }","jobname":"{ lv_jobname }","jobcount":"{ lv_jobcount }"{ lv_c }|.
+
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
 ENDCLASS.

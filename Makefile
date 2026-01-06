@@ -40,7 +40,7 @@ CURRENT_ARCH=$(shell go env GOARCH)
 
 .PHONY: all build clean test lint fmt deps tidy help install run
 .PHONY: build-all build-all-all build-linux build-darwin build-windows
-.PHONY: deploy-windows
+.PHONY: deploy-windows sync-embedded
 
 all: deps lint test build
 
@@ -119,6 +119,13 @@ deploy-windows: ## Build Windows amd64 and deploy to /mnt/c/bin/vibing-steampunk
 	cp $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(WINDOWS_DEPLOY_DIR)/$(BINARY_NAME).exe
 	@echo "Deployed: $(WINDOWS_DEPLOY_DIR)/$(BINARY_NAME).exe"
 	@ls -lh $(WINDOWS_DEPLOY_DIR)/$(BINARY_NAME).exe
+
+sync-embedded: build ## Export $ZADT_VSP from SAP to embedded/abap/ (requires SAP_* env vars)
+	@echo "Exporting ZADT_VSP package from SAP..."
+	@mkdir -p embedded/abap
+	VSP_OUTPUT_DIR=embedded/abap $(BUILD_DIR)/$(BINARY_NAME) lua scripts/sync-embedded.lua
+	@echo "Files in embedded/abap/"
+	@ls -lh embedded/abap/*.abap 2>/dev/null || echo "No files exported"
 
 install: ## Install the binary
 	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) $(CMD_DIR)
