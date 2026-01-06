@@ -52,8 +52,7 @@ Thumbs.db
 !.env.example
 
 # vsp config files (contain credentials)
-.vsp.json
-.vsp-systems.json
+.vsp*.json
 .vsp/
 
 # Session summaries (may contain credentials)
