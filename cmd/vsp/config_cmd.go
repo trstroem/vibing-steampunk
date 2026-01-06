@@ -25,7 +25,7 @@ var configCmd = &cobra.Command{
 vsp supports three configuration methods:
 
 1. .env file (or SAP_* env vars) - Default system for MCP server mode
-2. .vsp-systems.json - Multiple systems for CLI mode (vsp -s <system>)
+2. .vsp.json - Multiple systems for CLI mode (vsp -s <system>)
 3. .mcp.json - Claude Desktop MCP server configuration
 
 Priority (highest to lowest):
@@ -42,7 +42,7 @@ var configInitCmd = &cobra.Command{
 
 Files created:
   .env.example           - Environment variables for default system
-  .vsp-systems.example   - Multiple systems for CLI mode
+  .vsp.json.example      - Multiple systems for CLI mode
   .mcp.json.example      - Claude Desktop configuration
 
 These are created as .example files to avoid overwriting existing configs.
@@ -53,7 +53,7 @@ Copy and edit them to create your actual configuration.`,
 func runConfigInit(cmd *cobra.Command, args []string) error {
 	files := map[string]string{
 		".env.example":          envExample,
-		".vsp-systems.example":  vspSystemsExample,
+		".vsp.json.example":     vspSystemsExample,
 		".mcp.json.example":     mcpJsonExample,
 	}
 
@@ -74,7 +74,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nCreated %d example files.\n", created)
 	fmt.Println("\nNext steps:")
 	fmt.Println("  1. Copy .env.example to .env and fill in your SAP credentials")
-	fmt.Println("  2. Copy .vsp-systems.example to .vsp-systems.json for CLI mode")
+	fmt.Println("  2. Copy .vsp.json.example to .vsp.json for CLI mode")
 	fmt.Println("  3. Copy .mcp.json.example to .mcp.json for Claude Desktop")
 	fmt.Println("\nSee each file for detailed documentation.")
 
@@ -127,7 +127,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Systems config
-	fmt.Println("\nSystems Config (.vsp-systems.json):")
+	fmt.Println("\nSystems Config (.vsp.json):")
 	cfg, path, err := config.LoadSystems()
 	if err != nil {
 		fmt.Printf("  Error: %v\n", err)
@@ -271,7 +271,7 @@ var vspSystemsExample = func() string {
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 
 	return fmt.Sprintf(`// vsp Systems Configuration
-// Copy this file to .vsp-systems.json and edit for your systems.
+// Copy this file to .vsp.json and edit for your systems.
 //
 // Usage: vsp -s <system> <command>
 // Example: vsp -s dev search "ZCL_*"
@@ -280,9 +280,9 @@ var vspSystemsExample = func() string {
 //   VSP_<SYSTEM>_PASSWORD (e.g., VSP_DEV_PASSWORD, VSP_A4H_PASSWORD)
 //
 // Config file locations (searched in order):
-//   .vsp-systems.json        (current directory)
+//   .vsp.json                (current directory, preferred)
 //   .vsp/systems.json        (current directory)
-//   ~/.vsp-systems.json      (home directory)
+//   ~/.vsp.json              (home directory)
 //   ~/.vsp/systems.json      (home directory)
 
 %s

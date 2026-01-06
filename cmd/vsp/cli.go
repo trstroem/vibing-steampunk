@@ -48,7 +48,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			return nil, fmt.Errorf("failed to load systems config: %w", err)
 		}
 		if cfg == nil {
-			return nil, fmt.Errorf("no systems config found. Create .vsp-systems.json or ~/.vsp/systems.json\n\nExample:\n%s", config.ExampleConfig())
+			return nil, fmt.Errorf("no systems config found. Create .vsp.json or ~/.vsp.json\n\nExample:\n%s", config.ExampleConfig())
 		}
 
 		sys, err := cfg.GetSystem(systemName)

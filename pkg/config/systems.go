@@ -32,14 +32,14 @@ type SystemsConfig struct {
 // ConfigPaths returns the list of paths to search for systems config.
 func ConfigPaths() []string {
 	paths := []string{
-		".vsp-systems.json",           // Current directory
+		".vsp.json",                   // Current directory (preferred)
 		".vsp/systems.json",           // Current directory .vsp folder
 	}
 
 	// Add home directory paths
 	if home, err := os.UserHomeDir(); err == nil {
 		paths = append(paths,
-			filepath.Join(home, ".vsp-systems.json"),
+			filepath.Join(home, ".vsp.json"),
 			filepath.Join(home, ".vsp", "systems.json"),
 		)
 	}
