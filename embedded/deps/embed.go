@@ -366,3 +366,17 @@ func CreateDeploymentPlan(depName, packageName string, files []ABAPFile) *Deploy
 
 	return plan
 }
+
+// GetDependencyZIP retrieves the embedded ZIP data for a given source name.
+func GetDependencyZIP(source string) []byte {
+	// Placeholder implementation: Replace with actual embedded ZIP retrieval logic
+	switch source {
+	case "abapgit-standalone":
+		// Uncomment and use actual embedded ZIP variable
+		// return AbapGitStandalone
+	case "abapgit-dev":
+		// Uncomment and use actual embedded ZIP variable
+		// return AbapGitDev
+	}
+	return nil // Ensure all code paths return a value
+}
