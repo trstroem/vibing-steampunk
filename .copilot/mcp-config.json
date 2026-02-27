@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "sap-adt": {
+      "command": "c:/users/trstroem/vibing-steampunk/vsp",
+      "env": {
+        "SAP_URL": "https://51.124.151.226:44300",
+        "SAP_USER": "BPINST",
+        "SAP_PASSWORD": "Fettsjitkuk1965#"
+      }
+    }
+  }
+}
